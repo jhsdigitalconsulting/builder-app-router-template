@@ -6,14 +6,20 @@
  * secrets), gives it its own dev port, writes its .env.local, adds
  * `dev:<name>` / `build:<name>` root scripts, records its Vercel project in
  * .claude/project-config.md, installs, and optionally seeds its Builder space.
+ *
+ * It first asks whether the new site is fresh (the template's baseline Builder
+ * models) or a copy of an existing site (its app code plus its current Builder
+ * models, cloned into the new space). Every question comes before any change,
+ * and nothing is written until the user confirms the summary.
  */
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, cpSync } from "node:fs";
 import { basename, join } from "node:path";
 import { ROOT, APPS_DIR, nextFreePort } from "./apps.mjs";
-import { ask, askWithDefault, askYesNo, askChoice } from "./prompt.mjs";
+import { ask, askWithDefault, askYesNo, askChoice, cancel } from "./prompt.mjs";
 import { upsertEnv, replaceInFile, isValidAppName } from "./files.mjs";
+import { readPrivateKey } from "./model-source.mjs";
 
 // Never copied into the new app: build output, installed deps and secrets.
 const SKIPPED_ENTRIES = new Set([
@@ -67,28 +73,31 @@ async function askPort(defaultPort, takenPorts) {
   }
 }
 
-// Returns { publicKey, privateKey }, either of which may be "" (set them later).
-async function askBuilderKeys(source) {
+// Returns { publicKey, privateKey, reused }; either key may be "" (set later).
+// Reusing a space is only offered for a fresh site: a copied site's models are
+// cloned into a new space, so it needs its own.
+async function askBuilderKeys(source, offerReuse) {
   console.log(
     "\nBuilder.io space for the new site. Each site normally gets its own space —"
   );
   console.log(
     "the page model (including the home page at /) is shared by everything in a space."
   );
-  if (await askYesNo(`Reuse the Builder space from ${source.dir}?`)) {
+  if (offerReuse && await askYesNo(`Reuse the Builder space from ${source.dir}?`)) {
     const sourceEnvPath = join(source.path, ".env.local");
     const sourceEnv = existsSync(sourceEnvPath) ? readFileSync(sourceEnvPath, "utf8") : "";
     const read = (key) => (sourceEnv.match(new RegExp(`^${key}=(.*)$`, "m"))?.[1] || "").trim();
     return {
       publicKey: read("NEXT_PUBLIC_BUILDER_API_KEY"),
       privateKey: read("BUILDER_PRIVATE_KEY"),
+      reused: true,
     };
   }
   console.log("Enter the new space's API keys (https://builder.io → Account → API Keys).");
-  console.log("Press Enter to skip and add them to .env.local later.\n");
+  console.log("Press Enter to skip and add them to .env.local later.");
   const publicKey = await ask("Public API key: ");
   const privateKey = await ask("Private API key (bpk-...): ", { mask: true });
-  return { publicKey, privateKey };
+  return { publicKey, privateKey, reused: false };
 }
 
 function writeAppPackageJson(appPath, name, port) {
@@ -136,16 +145,35 @@ function recordVercelProject(name, vercelProject) {
 }
 
 export async function addSite(apps) {
-  console.log("\nAdd another site\n");
+  console.log("\nAdd another site — nothing is created until you confirm at the end.");
+  console.log("Press Ctrl+C at any prompt to cancel.");
 
-  const source = apps.length === 1
-    ? apps[0]
-    : apps[await askChoice("Copy which existing site as the starting point?", apps.map((a) => a.dir))];
-  console.log(`Starting point: apps/${source.dir}\n`);
+  // --- 1. Questions only; nothing is written until the confirmation below ---
+  // A fresh site gets the template's baseline models; a copy also clones the
+  // source site's current Builder model configuration into the new space.
+  const cloneSources = apps.filter((app) => readPrivateKey(app));
+  const setupChoice = await askChoice("How should the new site be set up?", [
+    "Fresh site — the template's baseline Builder models",
+    "Copy an existing site — its app code and current Builder models (including Builder UI changes)",
+  ]);
+  const cloning = setupChoice === 1;
+  if (cloning && !cloneSources.length) {
+    cancel("No site has a BUILDER_PRIVATE_KEY in its .env.local, so there are no models to copy.");
+  }
+  const pickFrom = cloning ? cloneSources : apps;
+  const source = pickFrom.length === 1
+    ? pickFrom[0]
+    : pickFrom[await askChoice(
+        cloning ? "Copy which site?" : "Copy the app code from which site?",
+        pickFrom.map((a) => a.dir)
+      )];
 
   const name = await askNewAppName();
   const port = await askPort(nextFreePort(apps), apps.map((a) => a.port));
-  const { publicKey, privateKey } = await askBuilderKeys(source);
+  const { publicKey, privateKey, reused } = await askBuilderKeys(source, !cloning);
+  if (cloning && privateKey && privateKey === readPrivateKey(source)) {
+    cancel(`Those keys belong to ${source.dir}'s space — a copied site needs a new space.`);
+  }
 
   console.log("\nBuilder space settings (used by the editor preview and Builder UI):");
   const siteUrl = await askWithDefault(
@@ -161,7 +189,30 @@ export async function addSite(apps) {
     name
   );
 
-  // --- Copy the app and give it its own identity ---
+  const hasKeys = Boolean(publicKey && privateKey);
+  const seedArgs = ["--filter", name, "init:builder"];
+  if (cloning) seedArgs.push(`--models-from=${source.dir}`);
+  const seedNow = hasKeys && await askYesNo(`Seed the Builder space for ${name} after creating it?`, false);
+
+  // --- 2. Confirm ---
+  const spaceLabel = reused
+    ? `shared with ${source.dir}`
+    : hasKeys ? "new space (keys entered)" : "keys not set yet — add them to .env.local later";
+  const modelsLabel = reused
+    ? `the existing models in ${source.dir}'s space`
+    : cloning ? `copied from ${source.dir}'s space` : "template baseline";
+  console.log("\nSummary:");
+  console.log(`  Site            ${name} (apps/${name}, port ${port})`);
+  console.log(`  App code from   apps/${source.dir}`);
+  console.log(`  Builder space   ${spaceLabel}`);
+  console.log(`  Models          ${modelsLabel}`);
+  console.log(`  Site URL        ${siteUrl}`);
+  console.log(`  Description     ${description}`);
+  console.log(`  Vercel project  ${vercelProject}`);
+  console.log(`  Seed space now  ${seedNow ? "yes" : "no"}`);
+  if (!await askYesNo("Create this site?", false)) cancel();
+
+  // --- 3. Copy the app and give it its own identity ---
   const appPath = join(APPS_DIR, name);
   cpSync(source.path, appPath, { recursive: true, filter: shouldCopy });
   writeAppPackageJson(appPath, name, port);
@@ -184,7 +235,7 @@ export async function addSite(apps) {
   recordVercelProject(name, vercelProject);
   console.log("✓ Recorded the Vercel project in .claude/project-config.md");
 
-  // --- Link the new workspace into the lockfile ---
+  // --- 4. Link the new workspace into the lockfile ---
   console.log("\nInstalling dependencies (pnpm install)...\n");
   const install = spawnSync("pnpm", ["install"], { cwd: ROOT, stdio: "inherit" });
   if (install.status !== 0) {
@@ -192,19 +243,19 @@ export async function addSite(apps) {
     process.exit(1);
   }
 
-  // --- Seed the new site's Builder space ---
-  if (!publicKey || !privateKey) {
-    console.log(`\n⚠ No Builder keys yet. Add them to apps/${name}/.env.local, then run:`);
-    console.log(`  pnpm --filter ${name} init:builder`);
-  } else if (await askYesNo(`Seed the Builder space for ${name} now?`, false)) {
-    const seed = spawnSync("pnpm", ["--filter", name, "init:builder"], {
-      cwd: ROOT,
-      stdio: "inherit",
-    });
+  // --- 5. Seed the new site's Builder space ---
+  const seedCommand = `pnpm ${seedArgs.join(" ")}`;
+  if (seedNow) {
+    const seed = spawnSync("pnpm", seedArgs, { cwd: ROOT, stdio: "inherit" });
     if (seed.status !== 0) {
-      console.error(`\n✗ Seeding failed. Fix the error above and run \`pnpm --filter ${name} init:builder\`.`);
+      console.error(`\n✗ Seeding failed. Fix the error above and run \`${seedCommand}\`.`);
       process.exit(1);
     }
+  } else if (!hasKeys) {
+    console.log(`\n⚠ No Builder keys yet. Add them to apps/${name}/.env.local, then run:`);
+    console.log(`  ${seedCommand}`);
+  } else {
+    console.log(`\nSeed the Builder space later with: ${seedCommand}`);
   }
 
   console.log(`\n✓ Site "${name}" created. Next steps:`);

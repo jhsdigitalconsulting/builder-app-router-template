@@ -18,6 +18,8 @@
  *   4. Seed the Builder space (runs `init:builder`) so the `site-context`,
  *      `article`, and `page` models exist, the home page is seeded at `/`,
  *      the space siteUrl + description are updated, and the app builds.
+ *      When another site app has its own space, it first asks whether to use
+ *      the template's baseline models or copy that site's models.
  *
  * This runs from the repo root (not from inside the app), so it can safely
  * rename the app directory as the final step. After a rename you must re-run
@@ -35,9 +37,10 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, APPS_DIR, findSiteApps, isConfigured } from "./lib/apps.mjs";
-import { askWithDefault, askYesNo, askChoice, closePrompt } from "./lib/prompt.mjs";
+import { askWithDefault, askYesNo, askChoice, cancel, closePrompt } from "./lib/prompt.mjs";
 import { upsertEnv, readEnvValue, replaceInFile, isValidAppName } from "./lib/files.mjs";
 import { addSite } from "./lib/add-site.mjs";
+import { askModelSourceArgs } from "./lib/model-source.mjs";
 
 const PROJECT_CONFIG_PATH = join(ROOT, ".claude", "project-config.md");
 
@@ -94,7 +97,8 @@ function readConfigValue(label) {
 }
 
 async function configureSite(app) {
-  console.log(`Site app: apps/${app.dir} (package "${app.name}")\n`);
+  console.log(`Site app: apps/${app.dir} (package "${app.name}")`);
+  console.log("Nothing is written until you confirm at the end. Press Ctrl+C at any prompt to cancel.\n");
 
   // --- 1. Credentials ---
   const envPath = join(app.path, ".env.local");
@@ -122,8 +126,6 @@ async function configureSite(app) {
 
   envContent = upsertEnv(envContent, "NEXT_PUBLIC_BUILDER_API_KEY", publicKey);
   envContent = upsertEnv(envContent, "BUILDER_PRIVATE_KEY", privateKey);
-  writeFileSync(envPath, envContent);
-  console.log(`\n✓ Wrote keys to apps/${app.dir}/.env.local`);
 
   // --- 1b. App name (optionally renames the app and sets NEXT_PUBLIC_SITE_CONTEXT_NAME) ---
   let appName = app.dir;
@@ -149,12 +151,7 @@ async function configureSite(app) {
       break;
     }
   }
-  const currentSiteContextName = readEnvValue(envContent, "NEXT_PUBLIC_SITE_CONTEXT_NAME");
-  if (appName !== currentSiteContextName) {
-    envContent = upsertEnv(envContent, "NEXT_PUBLIC_SITE_CONTEXT_NAME", appName);
-    writeFileSync(envPath, envContent);
-    console.log(`✓ Set NEXT_PUBLIC_SITE_CONTEXT_NAME="${appName}" in apps/${app.dir}/.env.local`);
-  }
+  envContent = upsertEnv(envContent, "NEXT_PUBLIC_SITE_CONTEXT_NAME", appName);
 
   // --- 1c. Builder space settings (siteUrl + description) ---
   console.log("\nBuilder space settings (used by the editor preview and Builder UI):");
@@ -173,13 +170,11 @@ async function configureSite(app) {
     "BUILDER_SPACE_DESCRIPTION",
     builderSpaceDescription
   );
-  writeFileSync(envPath, envContent);
-  console.log(`✓ Wrote BUILDER_SITE_URL and BUILDER_SPACE_DESCRIPTION to apps/${app.dir}/.env.local`);
 
   // --- 1d. Claude Code command integrations (Jira + Vercel) ---
   console.log("\nClaude Code command config (.claude/project-config.md):");
   let jira = null;
-  if (await askYesNo("\nConfigure Jira integration for the Claude Code commands?")) {
+  if (await askYesNo("Configure Jira integration for the Claude Code commands?")) {
     // Reconstruct a sample URL from existing config so re-running setup pre-fills nicely.
     const existingKey = readConfigValue("Project key") || "";
     const existingBase = readConfigValue("Base URL") || "";
@@ -214,15 +209,31 @@ async function configureSite(app) {
     "Vercel project name (for preview-deployment detection)",
     readConfigValue(vercelLabel) || appName
   );
+
+  // --- 1e. Where the space's models come from (only asked when another site has its own space) ---
+  const modelArgs = await askModelSourceArgs(findSiteApps(), app.dir, privateKey);
+  const seedArgs = ["--filter", app.name, "init:builder", ...modelArgs];
+
+  // --- 2. Confirm, then write ---
+  const newName = appName !== app.dir ? appName : null;
+  console.log("\nSummary:");
+  console.log(`  Site            apps/${app.dir}${newName ? ` → renamed to apps/${newName}` : ""}`);
+  console.log(`  Builder keys    saved to apps/${app.dir}/.env.local`);
+  console.log(`  Models          ${modelArgs.length ? `copied from ${modelArgs[0].split("=")[1]}'s space` : "template baseline"}`);
+  console.log(`  Site URL        ${builderSiteUrl}`);
+  console.log(`  Description     ${builderSpaceDescription}`);
+  console.log(`  Jira            ${jira ? jira.projectKey : "not configured"}`);
+  console.log(`  Vercel project  ${vercelProject}`);
+  if (!await askYesNo("Apply this configuration and seed the Builder space?", false)) cancel();
+
+  writeFileSync(envPath, envContent);
+  console.log(`\n✓ Wrote apps/${app.dir}/.env.local`);
   const cfgPath = writeProjectConfig({ jira, vercelLabel, vercelProject });
   console.log(`✓ Wrote ${cfgPath.replace(ROOT + "/", "")}`);
 
-  // --- 2. Rename derived from app name (already validated above) ---
-  const newName = appName !== app.dir ? appName : null;
-
   // --- 3. Seed Builder models/content (before any rename, using the current name) ---
-  console.log(`\nSeeding Builder models (pnpm --filter ${app.name} init:builder)...\n`);
-  const seed = spawnSync("pnpm", ["--filter", app.name, "init:builder"], {
+  console.log(`\nSeeding Builder models (pnpm ${seedArgs.join(" ")})...\n`);
+  const seed = spawnSync("pnpm", seedArgs, {
     cwd: ROOT,
     stdio: "inherit",
   });

@@ -7,6 +7,9 @@
  * promise hangs, and node exits silently when the event loop drains. With one
  * shared reader we queue every line and hand them out one prompt at a time, and
  * resolve "" after EOF so the script can never hang.
+ *
+ * On a real terminal, Ctrl+C (or Ctrl+D) at a prompt cancels the whole script
+ * instead of answering the question with "" and carrying on with defaults.
  */
 
 import readline from "node:readline";
@@ -37,7 +40,22 @@ rl.on("line", (line) => {
     lineQueue.push(line);
   }
 });
+// Stops the script. The setup flows only write after their final confirmation,
+// so cancelling at a prompt leaves nothing half-done.
+let cancelling = false;
+export function cancel(message = "Setup cancelled — nothing was changed.") {
+  if (cancelling) return; // rl.close() below re-enters through the close handler
+  cancelling = true;
+  muted = false;
+  process.stdout.write(`\n\n✗ ${message}\n`);
+  rl.close();
+  process.exit(130);
+}
+
+rl.on("SIGINT", () => cancel());
 rl.on("close", () => {
+  // Ctrl+D on a terminal ends the input; piped input simply ran out of lines.
+  if (process.stdin.isTTY && pendingResolver) cancel();
   stdinEnded = true;
   if (pendingResolver) {
     const resolve = pendingResolver;

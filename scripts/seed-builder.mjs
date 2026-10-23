@@ -45,17 +45,32 @@
  *   - BUILDER_PRIVATE_KEY          (bpk-...)  — required, for writes
  *   - NEXT_PUBLIC_BUILDER_API_KEY             — required, to check existing content
  *   - NEXT_PUBLIC_SITE_CONTEXT_NAME           — entry name the app queries by
+ *
+ * Cloning another site's models instead of steps 1–6:
+ *
+ *   pnpm --filter <app> init:builder --models-from=<other-app>
+ *
+ * copies every model definition from <other-app>'s Builder space as it is now
+ * (including changes made in the Builder UI), using the private key in that
+ * app's .env.local. Step 7 still seeds the sample content, skipping any model
+ * the copied schema doesn't have. See scripts/lib/copy-models.mjs.
  */
 
 import { GraphQLClient, gql } from "graphql-request";
-import { readFileSync, openSync } from "node:fs";
+import { readFileSync, existsSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
-import { ROOT, findCurrentApp } from "./lib/apps.mjs";
+import { ROOT, findCurrentApp, findSiteApps } from "./lib/apps.mjs";
+import { readEnvValue } from "./lib/files.mjs";
+import { copyModels } from "./lib/copy-models.mjs";
 
 // The app being seeded — the one `pnpm --filter <app> init:builder` runs in.
 const APP = findCurrentApp();
+
+// `--models-from=<app>` clones that site's models instead of the baseline ones.
+const MODELS_FROM =
+  process.argv.find((arg) => arg.startsWith("--models-from="))?.split("=")[1] || "";
 
 // --- Load .env.local (standalone node scripts don't get Next's env loading) ---
 function loadEnvLocal() {
@@ -1163,9 +1178,9 @@ async function ensureDevServerRunning() {
   console.log(`  Logs: apps/${APP.dir}/dev-server.log (stop it with: kill $(lsof -ti:${APP.port}))\n`);
 }
 
-async function main() {
-  console.log(`\nProvisioning Builder space for ${APP.name}...\n`);
-
+// Creates the template's baseline models, or brings older spaces up to date.
+// Returns true if it created any model.
+async function provisionBaselineModels() {
   const { models } = await client.request(LIST_MODELS);
   const existingNames = new Set(models.map((m) => m.name));
 
@@ -1233,40 +1248,88 @@ async function main() {
   // update it directly (there's no "freshly created" branch to skip here).
   await ensurePreviewUrl(SYMBOL_MODEL_NAME, SYMBOL_PREVIEW_URL_LOGIC, models);
 
+  return createdSiteContext || createdArticle || createdNav || createdUrlRedirect;
+}
+
+// Clones another site's model definitions as they are now in its space,
+// including anything changed by hand in the Builder UI. The baseline retrofits
+// are skipped so they don't re-add fields the source site removed.
+// Returns true if it created any model.
+async function provisionModelsFrom(appRef) {
+  const source = findSiteApps().find((app) => app.dir === appRef || app.name === appRef);
+  if (!source) throw new Error(`--models-from: no site app named "${appRef}".`);
+  const envPath = join(source.path, ".env.local");
+  const sourceKey = existsSync(envPath)
+    ? readEnvValue(readFileSync(envPath, "utf8"), "BUILDER_PRIVATE_KEY")
+    : "";
+  if (!sourceKey) {
+    throw new Error(`--models-from: apps/${source.dir}/.env.local has no BUILDER_PRIVATE_KEY.`);
+  }
+  console.log(`Model configuration: copied from ${source.dir}'s Builder space.`);
+  const { created } = await copyModels(sourceKey, PRIVATE_KEY);
+  return created > 0;
+}
+
+async function main() {
+  console.log(`\nProvisioning Builder space for ${APP.name}...\n`);
+
+  const createdModels = MODELS_FROM
+    ? await provisionModelsFrom(MODELS_FROM)
+    : await provisionBaselineModels();
+
   // The CDN takes a moment to register a brand-new model before it will
   // accept writes against it.
-  if (createdSiteContext || createdArticle || createdNav || createdUrlRedirect) {
+  if (createdModels) {
     await new Promise((r) => setTimeout(r, 2000));
   }
 
-  await ensureContent(
-    ARTICLE_MODEL_NAME,
-    SAMPLE_ARTICLE_HANDLE,
-    SAMPLE_ARTICLE_DATA
-  );
+  // A copied schema may not include every model the sample content needs.
+  const { models } = await client.request(LIST_MODELS);
+  const modelNames = new Set(models.map((m) => m.name));
+  const hasModel = (name) => {
+    if (modelNames.has(name)) return true;
+    console.log(`• Model "${name}" not in this space — skipping its sample content.`);
+    return false;
+  };
+
+  if (hasModel(ARTICLE_MODEL_NAME)) {
+    await ensureContent(
+      ARTICLE_MODEL_NAME,
+      SAMPLE_ARTICLE_HANDLE,
+      SAMPLE_ARTICLE_DATA
+    );
+  }
 
   // Seed the sample menus first, then wire their ids onto site-context.
-  const headerNavId = await ensureContent(
-    NAV_MODEL_NAME,
-    PRIMARY_NAV_NAME,
-    PRIMARY_NAV_DATA
-  );
-  const footerNavId = await ensureContent(
-    NAV_MODEL_NAME,
-    FOOTER_NAV_NAME,
-    FOOTER_NAV_DATA
-  );
-  await migrateNavEntryLinks(PRIMARY_NAV_NAME);
-  await migrateNavEntryLinks(FOOTER_NAV_NAME);
-  await ensureSiteContext(headerNavId, footerNavId);
+  let headerNavId = null;
+  let footerNavId = null;
+  if (hasModel(NAV_MODEL_NAME)) {
+    headerNavId = await ensureContent(
+      NAV_MODEL_NAME,
+      PRIMARY_NAV_NAME,
+      PRIMARY_NAV_DATA
+    );
+    footerNavId = await ensureContent(
+      NAV_MODEL_NAME,
+      FOOTER_NAV_NAME,
+      FOOTER_NAV_DATA
+    );
+    await migrateNavEntryLinks(PRIMARY_NAV_NAME);
+    await migrateNavEntryLinks(FOOTER_NAV_NAME);
+  }
+  if (hasModel(MODEL_NAME)) {
+    await ensureSiteContext(headerNavId, footerNavId);
+  }
 
   // Seed the sample redirect entry. next.config.ts reads this model by name at
   // build time, so a single well-known entry name keeps the lookup simple.
-  await ensureContent(
-    URL_REDIRECT_MODEL_NAME,
-    URL_REDIRECT_ENTRY_NAME,
-    URL_REDIRECT_DATA
-  );
+  if (hasModel(URL_REDIRECT_MODEL_NAME)) {
+    await ensureContent(
+      URL_REDIRECT_MODEL_NAME,
+      URL_REDIRECT_ENTRY_NAME,
+      URL_REDIRECT_DATA
+    );
+  }
 
   // Seed the home page at "/". The built-in `page` model is catch-all; we set
   // URL targeting via `query` so fetchOneEntry({ urlPath: "/" }) resolves it.
