@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 // Maps a Builder.io model to the published path that must be revalidated.
 // `page` revalidates its own `data.url`; `article` lives under a fixed route
@@ -21,6 +22,14 @@ interface BuilderWebhookBody {
   data?: Record<string, unknown>;
   modelName?: string;
   operation?: string;
+}
+
+// Constant-time comparison. Hashing both values first gives equal-length
+// buffers, so timingSafeEqual never throws and length isn't leaked either.
+function secretsMatch(provided: string, expected: string): boolean {
+  const a = createHash("sha256").update(provided).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
 }
 
 function resolvePath(body: BuilderWebhookBody): string | null {
@@ -48,10 +57,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const url = new URL(request.url);
-  const provided =
-    request.headers.get("x-revalidate-secret") ?? url.searchParams.get("secret");
-  if (provided !== secret) {
+  // Header only: a secret in the query string ends up in access logs.
+  const provided = request.headers.get("x-revalidate-secret");
+  if (!provided || !secretsMatch(provided, secret)) {
     return NextResponse.json({ message: "Invalid secret" }, { status: 401 });
   }
 
@@ -62,7 +70,7 @@ export async function POST(request: Request) {
     // No/invalid JSON body — fall back to the `?path=` query param below.
   }
 
-  const path = resolvePath(body) ?? url.searchParams.get("path");
+  const path = resolvePath(body) ?? new URL(request.url).searchParams.get("path");
   if (!path) {
     return NextResponse.json({ message: "Missing path" }, { status: 400 });
   }
