@@ -192,7 +192,8 @@ async function configureSite(app) {
     const existingKey = readConfigValue("Project key") || "";
     const existingBase = readConfigValue("Base URL") || "";
     const candidate = (existingKey && existingBase) ? `${existingBase}${existingKey}-1` : "";
-    const defaultJiraUrl = /^https?:\/\//.test(candidate) ? candidate : "";
+    // When changing an existing config, Enter (no URL) turns Jira off instead.
+    const defaultJiraUrl = !existingJira && /^https?:\/\//.test(candidate) ? candidate : "";
 
     let parsed = false;
     while (!parsed) {
@@ -201,7 +202,7 @@ async function configureSite(app) {
         defaultJiraUrl
       );
       if (!jiraUrl) {
-        console.log("  Skipping Jira config.");
+        console.log(existingJira ? "  Turning off Jira config." : "  Skipping Jira config.");
         break;
       }
       const m = jiraUrl.match(/^(https?:\/\/([^/]+)\/browse\/)([A-Za-z][A-Za-z0-9]*)-\d+/i);
@@ -235,8 +236,10 @@ async function configureSite(app) {
   console.log(`  Models          ${modelArgs.length ? `copied from ${modelArgs[0].split("=")[1]}'s space` : "template baseline"}`);
   if (modelArgs.length) {
     console.log("  ⚠ Copying replaces every model in this space that has the same name as one in the");
-    console.log("    source space (its own webhooks are kept), and the seed rewrites the home page at /.");
+    console.log("    source space (its own webhooks are kept).");
   }
+  console.log("  ⚠ Seeding rewrites the home page at / and the space Site URL, unless another site");
+  console.log("    app uses this same space.");
   console.log(`  Site URL        ${builderSiteUrl}`);
   console.log(`  Description     ${builderSpaceDescription}`);
   console.log(`  Jira            ${jira ? jira.projectKey : "not configured"}`);

@@ -928,6 +928,12 @@ async function ensureSiteUrl(siteUrl) {
       console.log(`✓ Space Site URL already set to ${siteUrl}`);
       return;
     }
+  } catch (err) {
+    // Not being able to read the current value shouldn't stop the update.
+    const reason = err.response?.errors?.[0]?.message || err.message;
+    console.log(`• Couldn't read the current Site URL (${reason}); setting it anyway.`);
+  }
+  try {
     await client.request(UPDATE_SPACE_PROPERTIES, { properties: { siteUrl } });
     console.log(`✓ Set space Site URL → ${siteUrl}`);
   } catch (err) {
@@ -1329,15 +1335,25 @@ async function main() {
     );
   }
 
-  // Seed the home page at "/". The built-in `page` model is catch-all; we set
-  // URL targeting via `query` so fetchOneEntry({ urlPath: "/" }) resolves it.
-  // ensureHomePage always patches blocks so re-runs keep the page in sync.
-  await ensureHomePage();
+  // The home page and Site URL belong to the whole space, so when another
+  // site app uses this same space they are left as that site has them.
+  const sharedWith = findSiteApps().filter(
+    (app) => app.dir !== APP.dir && readPrivateKey(app) === PRIVATE_KEY
+  );
+  if (sharedWith.length) {
+    const others = sharedWith.map((app) => app.dir).join(", ");
+    console.log(`\n• This space is shared with ${others} — leaving its home page and Site URL unchanged.`);
+  } else {
+    // Seed the home page at "/". The built-in `page` model is catch-all; we set
+    // URL targeting via `query` so fetchOneEntry({ urlPath: "/" }) resolves it.
+    // ensureHomePage always patches blocks so re-runs keep the page in sync.
+    await ensureHomePage();
 
-  // The Site URL is set through the Admin API; the description has no
-  // mutation, so remind the user to apply it in the Builder.io Settings UI.
-  await ensureSiteUrl(BUILDER_SITE_URL);
-  printSpaceDescriptionReminder(BUILDER_SPACE_DESCRIPTION);
+    // The Site URL is set through the Admin API; the description has no
+    // mutation, so remind the user to apply it in the Builder.io Settings UI.
+    await ensureSiteUrl(BUILDER_SITE_URL);
+    printSpaceDescriptionReminder(BUILDER_SPACE_DESCRIPTION);
+  }
 
   // The CMSLink plugin must be installed manually via the Builder.io UI.
   printPluginReminder(CMS_LINK_PLUGIN_URL);

@@ -208,7 +208,7 @@ export async function addSite(apps) {
   console.log(`  App code from   apps/${source.dir}`);
   console.log(`  Builder space   ${spaceLabel}`);
   console.log(`  Models          ${modelsLabel}`);
-  console.log(`  Site URL        ${siteUrl}`);
+  console.log(`  Site URL        ${siteUrl}${reused ? " (not applied — the space is shared)" : ""}`);
   console.log(`  Description     ${description}`);
   console.log(`  Vercel project  ${vercelProject}`);
   console.log(`  Seed space now  ${seedNow ? "yes" : "no"}`);
