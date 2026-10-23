@@ -9,8 +9,22 @@ export const registration: RegisteredComponent[] = [
     friendlyName: "Center Logo Header",
     ...withImage(),
     inputs: [
-      { name: "navigation1", type: "object", friendlyName: "Primary Navigation" },
-      { name: "navigation2", type: "object", friendlyName: "Secondary Navigation" },
+      {
+        name: "navigation1",
+        type: "reference",
+        model: "navigation",
+        friendlyName: "Primary Navigation",
+        helperText:
+          "Pick the Navigation entry shown here. Leave empty to use the built-in default menu.",
+      },
+      {
+        name: "navigation2",
+        type: "reference",
+        model: "navigation",
+        friendlyName: "Secondary Navigation",
+        helperText:
+          "Pick the Navigation entry shown here. Leave empty to use the built-in default menu.",
+      },
       {
         name: "logo",
         type: "string",

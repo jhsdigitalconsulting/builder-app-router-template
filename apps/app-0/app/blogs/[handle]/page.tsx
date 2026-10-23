@@ -3,8 +3,6 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { fetchOneEntry, fetchEntries } from "@builder.io/sdk-react";
 import {
-  DefaultHeader,
-  DefaultFooter,
   Banner100,
   TileCTA,
   ThemeProvider,
@@ -16,6 +14,7 @@ import type { SiteContext } from "@repo/types";
 import { BUILDER_API_KEY, getSiteContext } from "../../../lib/builder";
 import { isPreviewingFromSearchParams } from "../../../lib/page-utils";
 import RenderBuilderContent from "../../../components/RenderBuilderContent";
+import PageShell from "../../../components/PageShell";
 
 // ISR window (seconds) for published Builder.io content. Must be a literal —
 // App Router segment config is statically analyzed and rejects runtime/env
@@ -137,9 +136,7 @@ export default async function BlogPage({
       : null;
 
   return (
-    <div className="flex flex-col min-h-screen">
-      <DefaultHeader />
-      <main id="main-content" className="flex-grow" role="main">
+    <PageShell siteContext={siteContext as SiteContext | null} locale={locale}>
         {schemaProps && <ArticleSchemaData {...schemaProps} />}
         <ThemeProvider>
           <Banner100
@@ -181,8 +178,6 @@ export default async function BlogPage({
             />
           </article>
         </ThemeProvider>
-      </main>
-      <DefaultFooter />
-    </div>
+    </PageShell>
   );
 }

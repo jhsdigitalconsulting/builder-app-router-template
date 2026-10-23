@@ -7,6 +7,12 @@ const meta = {
   parameters: {
     layout: "fullscreen",
   },
+  argTypes: {
+    theme: {
+      control: "select",
+      options: ["light", "dark", "accent", "gradient", "transparent-light", "transparent-dark"],
+    },
+  },
   tags: ["autodocs"],
 } satisfies Meta<typeof GlobalFooter>;
 

@@ -69,9 +69,8 @@ export interface PageData {
   image: string;
   metadata: Metadata;
   blocks: any[];
-  headerNavigation1?: ModelReference | Navigation;
-  headerNavigation2?: ModelReference | Navigation;
-  footerNavigation?: ModelReference | Navigation;
+  header?: ModelReference;
+  footer?: ModelReference;
 }
 
 export interface Content {
@@ -96,7 +95,7 @@ export interface ModelReference {
   "@type": string;
   id: string;
   model: string;
-  value: Content;
+  value?: Content;
 }
 
 export interface Navigation extends Content {
@@ -180,9 +179,8 @@ export interface SiteContext extends Content {
       email: string;
       areaServed: string;
     };
-    headerNavigation1?: ModelReference;
-    headerNavigation2?: ModelReference;
-    footerNavigation1?: ModelReference;
+    defaultHeader?: ModelReference;
+    defaultFooter?: ModelReference;
     socialNetworks?: SocialNetwork[];
     googleAnalyticsId?: string;
   };

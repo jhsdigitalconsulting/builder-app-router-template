@@ -2,13 +2,15 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { Navigation, SocialNetwork, Themeable } from "@repo/types";
+import { getNavItems } from "../../../utils/navigation";
+import { ModelReference, Navigation, SocialNetwork, Themeable } from "@repo/types";
 import { resolveLinkHref } from "../../../utils/links";
 import { socialNetworkIconStyles, SocialNetworkName } from "@repo/types/social";
 import { useSiteContext } from "../../../contexts/SiteContextProvider";
 
 interface FooterProps extends Themeable {
-  navigation?: Navigation;
+  logo?: string;
+  navigation?: ModelReference;
   socialNetworks?: SocialNetwork[];
 }
 
@@ -44,15 +46,23 @@ const defaultFooterNav: Navigation = {
 const Footer = ({
   inheritTheme = false,
   theme = "dark",
-  navigation: footerNav = defaultFooterNav,
+  navigation,
   socialNetworks,
+  logo,
 }: FooterProps) => {
   const { siteContext } = useSiteContext();
+
+  // An unset logo binds to the Site context's logo, then a placeholder. The
+  // Builder SDK passes "" for an unset input, so coalesce with `||`.
+  const logoSrc =
+    logo ||
+    siteContext?.data?.logo ||
+    "https://placehold.co/400x100.png?text=Logo";
 
   const socialNav = socialNetworks || siteContext?.data?.socialNetworks || [];
 
   // Get navigation items with fallback
-  const navItems = (footerNav || defaultFooterNav).data.level1;
+  const navItems = getNavItems(navigation, defaultFooterNav);
 
   return (
     <footer
@@ -65,8 +75,8 @@ const Footer = ({
           <Link href="/" className="block">
             <div className="relative w-40 md:w-[200px] h-[60px]">
               <Image
-                src="https://placehold.co/400x100.png?text=Logo"
-                alt="Company Logo Image"
+                src={logoSrc}
+                alt={`${siteContext?.data?.siteName} Logo`}
                 fill
                 sizes="(min-width: 768px) 200px, 160px"
                 style={{ objectFit: "contain" }}
@@ -104,7 +114,7 @@ const Footer = ({
                 return (
                   <a
                     key={social.name}
-                    href={social.href}
+                    href={resolveLinkHref(social.href)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="hover:text-theme-link text-theme-text"

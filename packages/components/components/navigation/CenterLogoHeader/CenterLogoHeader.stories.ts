@@ -67,8 +67,18 @@ const defaultSecondaryNav = {
 
 export const Default: Story = {
   args: {
-    navigation1: defaultPrimaryNav,
-    navigation2: defaultSecondaryNav,
+    navigation1: {
+      "@type": "@builder.io/core:Reference",
+      id: "mock",
+      model: "navigation",
+      value: defaultPrimaryNav,
+    },
+    navigation2: {
+      "@type": "@builder.io/core:Reference",
+      id: "mock",
+      model: "navigation",
+      value: defaultSecondaryNav,
+    },
     logo: "https://placehold.co/800x600/EEE/5ce1e6.png",
   },
 };
@@ -76,22 +86,32 @@ export const Default: Story = {
 export const WithCustomNav: Story = {
   args: {
     navigation1: {
-      ...defaultPrimaryNav,
-      data: {
-        level1: [
-          { text: "Dashboard", href: "/dashboard" },
-          { text: "Products", href: "/products" },
-          { text: "Analytics", href: "/analytics" },
-        ],
+      "@type": "@builder.io/core:Reference",
+      id: "mock",
+      model: "navigation",
+      value: {
+        ...defaultPrimaryNav,
+        data: {
+          level1: [
+            { text: "Dashboard", href: "/dashboard" },
+            { text: "Products", href: "/products" },
+            { text: "Analytics", href: "/analytics" },
+          ],
+        },
       },
     },
     navigation2: {
-      ...defaultSecondaryNav,
-      data: {
-        level1: [
-          { text: "Settings", href: "/settings" },
-          { text: "Support", href: "/support" },
-        ],
+      "@type": "@builder.io/core:Reference",
+      id: "mock",
+      model: "navigation",
+      value: {
+        ...defaultSecondaryNav,
+        data: {
+          level1: [
+            { text: "Settings", href: "/settings" },
+            { text: "Support", href: "/support" },
+          ],
+        },
       },
     },
     logo: "/SMA_Logo_Dark_Slim.avif",

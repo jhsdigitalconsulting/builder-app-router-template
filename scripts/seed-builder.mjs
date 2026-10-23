@@ -17,11 +17,14 @@
  *      "Model not found" when fetchEntries({ model: "article" }) 404s.
  *      Using `kind: "section"` because articles are fetched by `data.handle`
  *      rather than URL path — they appear under "Section models" in Builder.
- *   3. Creates the `navigation` data model and adds the header/footer
- *      navigation reference fields to `site-context`. DefaultHeader and
- *      DefaultFooter read `siteContext.data.headerNavigation1/2` and
- *      `footerNavigation1` (resolved via `enrich: true`); without these the
- *      header/footer fall back to empty menus.
+ *   3. Creates the `navigation` data model and adds the `defaultHeader` /
+ *      `defaultFooter` symbol reference fields to `site-context`, plus
+ *      per-page `header` / `footer` override fields on the built-in `page`
+ *      model. The app renders page override, then site default, then the bare
+ *      Header/Footer. The old headerNavigation1/2 and footerNavigation1 fields
+ *      (site-context) and headerNavigation1/2 and footerNavigation/footerNavigation1
+ *      fields (page) are removed once both symbols exist (their menus carry
+ *      over into the new symbols); until then they are left untouched.
  *   4. Creates the shared `metadata` data model (SEO description + keywords) and
  *      adds it as a `model`-type field to both the `article` and built-in `page`
  *      models, so every model that maps 1:1 to a web page exposes the same
@@ -35,8 +38,11 @@
  *      rules to Next.js. Without the model that build-time fetch 404s.
  *   7. Seeds a default `site-context` entry, a sample `article` entry, sample
  *      header + footer `navigation` entries, and a sample `url-redirect` entry
- *      (via the Builder Write REST API), then wires the navigation references
- *      onto the `site-context` entry so real menus render on first run. NOTE:
+ *      (via the Builder Write REST API), then creates the `default-header` and
+ *      `default-footer` symbols (each showing a menu) and points the
+ *      `site-context` entry at them where unset. The `symbol` model is
+ *      created first if the space lacks it (except under --models-from, where
+ *      a missing model makes this warn and skip). NOTE:
  *      the Admin GraphQL API has no content-write mutation, so content creation
  *      must go through the Write API. Model = GraphQL, content = REST.
  *
@@ -53,13 +59,16 @@
  * copies every model definition from <other-app>'s Builder space as it is now
  * (including changes made in the Builder UI), using the private key in that
  * app's .env.local. Step 7 still seeds the sample content, skipping any model
- * the copied schema doesn't have. See scripts/lib/copy-models.mjs.
+ * the copied schema doesn't have. Copied models skip the baseline retrofits
+ * (including the symbol fields and the legacy nav-field removal), so the source
+ * space's model definitions are used as they are. See scripts/lib/copy-models.mjs.
  */
 
 import { GraphQLClient, gql } from "graphql-request";
 import { readFileSync, openSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { ROOT, findCurrentApp, findSiteApps } from "./lib/apps.mjs";
 import { readPrivateKey } from "./lib/files.mjs";
@@ -109,8 +118,13 @@ const METADATA_MODEL_NAME = "metadata";
 const URL_REDIRECT_MODEL_NAME = "url-redirect";
 // Builder's built-in catch-all page model (not created by this script).
 const PAGE_MODEL_NAME = "page";
-// Builder's built-in symbol model (not created by this script).
+// Builder's built-in symbol model. Builder only creates it once someone opens
+// the Symbols tab, so this script creates it (SYMBOL_MODEL_BODY) when missing.
 const SYMBOL_MODEL_NAME = "symbol";
+// The symbols the site header/footer render from, and that the site context's
+// `defaultHeader` / `defaultFooter` point at.
+const HEADER_SYMBOL_NAME = "default-header";
+const FOOTER_SYMBOL_NAME = "default-footer";
 const ADMIN_API = "https://cdn.builder.io/api/v2/admin";
 const writeApi = (model) => `https://builder.io/api/v1/write/${model}`;
 const writeUpdateApi = (model, id) =>
@@ -158,21 +172,46 @@ const metadataField = (modelId) =>
     helperText: "Shared SEO metadata (description + keywords).",
   });
 
-// --- Navigation reference fields added to site-context. Each points at the
-// `navigation` model; DefaultHeader/DefaultFooter consume the enriched values. ---
-const SITE_CONTEXT_NAV_FIELDS = [
-  field("headerNavigation1", "reference", {
-    model: NAV_MODEL_NAME,
-    helperText: "Primary header navigation (references a navigation entry).",
+// --- Symbol reference fields. The site context holds the default header/footer
+// symbols; each page can override them. The app resolves page override, then
+// site default, then the bare Header/Footer component. ---
+const SITE_CONTEXT_SYMBOL_FIELDS = [
+  field("defaultHeader", "reference", {
+    model: SYMBOL_MODEL_NAME,
+    helperText:
+      "Header symbol used on every page unless the page picks its own. Leave empty for the built-in header.",
   }),
-  field("headerNavigation2", "reference", {
-    model: NAV_MODEL_NAME,
-    helperText: "Secondary header navigation (optional).",
+  field("defaultFooter", "reference", {
+    model: SYMBOL_MODEL_NAME,
+    helperText:
+      "Footer symbol used on every page unless the page picks its own. Leave empty for the built-in footer.",
   }),
-  field("footerNavigation1", "reference", {
-    model: NAV_MODEL_NAME,
-    helperText: "Footer navigation (references a navigation entry).",
+];
+
+const PAGE_SYMBOL_FIELDS = [
+  field("header", "reference", {
+    model: SYMBOL_MODEL_NAME,
+    helperText:
+      "Overrides the site's default header symbol for this page. Leave empty to use the site default.",
   }),
+  field("footer", "reference", {
+    model: SYMBOL_MODEL_NAME,
+    helperText:
+      "Overrides the site's default footer symbol for this page. Leave empty to use the site default.",
+  }),
+];
+
+// Fields from the earlier navigation wiring, replaced by the symbol fields.
+const LEGACY_SITE_CONTEXT_NAV_KEYS = [
+  "headerNavigation1",
+  "headerNavigation2",
+  "footerNavigation1",
+];
+const LEGACY_PAGE_NAV_KEYS = [
+  "headerNavigation1",
+  "headerNavigation2",
+  "footerNavigation",
+  "footerNavigation1",
 ];
 
 // --- site-context model definition (mirrors the SiteContext type in @repo/types) ---
@@ -225,7 +264,7 @@ const MODEL_BODY = {
     field("googleAnalyticsId", "text", {
       helperText: "Google Analytics measurement ID (e.g. G-XXXXXXX).",
     }),
-    ...SITE_CONTEXT_NAV_FIELDS,
+    ...SITE_CONTEXT_SYMBOL_FIELDS,
   ],
 };
 
@@ -276,10 +315,34 @@ const ARTICLE_PREVIEW_URL_LOGIC = [
   "return `${baseUrl}/blogs/${content.data.handle || '_'}?preview=true`;",
 ].join("\n");
 
-// Symbols render at /section-editors/symbol via a static editor entry page
-// (there's no per-symbol route — the name is only used as a query hint).
+// Symbols render at /section-editors/symbol/<name>, which loads the symbol by
+// name (`_` opens an empty editor canvas).
 const SYMBOL_PREVIEW_URL_LOGIC =
   "return `${space.siteUrl}/section-editors/symbol/${content.name || '_'}?preview=true`;";
+
+// --- symbol model definition ---
+// Mirrors the model Builder itself creates from the Symbols tab (read back from
+// a live space): a section model with subType "symbol" whose content lives in a
+// hidden `blocks` field. The subType is what makes the editor treat it as the
+// Symbols model rather than an ordinary section model.
+const SYMBOL_MODEL_BODY = {
+  name: SYMBOL_MODEL_NAME,
+  kind: "component",
+  subType: "symbol",
+  helperText: "Reusable Builder content",
+  editingUrlLogic: SYMBOL_PREVIEW_URL_LOGIC,
+  fields: [
+    {
+      "@type": "@builder.io/core:Field",
+      name: "blocks",
+      type: "uiBlocks",
+      defaultValue: [],
+      hidden: true,
+      showTemplatePicker: true,
+      copyOnAdd: true,
+    },
+  ],
+};
 
 // --- metadata model definition (mirrors the Metadata type in @repo/types) ---
 // kind: "data" — a small reusable SEO block embedded via `model`-type fields.
@@ -954,12 +1017,14 @@ function printSpaceDescriptionReminder(description) {
 }
 
 // Returns the first matching content entry, or null.
-async function getEntry(model, name) {
+// `includeUnpublished` also matches drafts, so a re-run never duplicates them.
+async function getEntry(model, name, includeUnpublished = false) {
   const url =
     `https://cdn.builder.io/api/v3/content/${model}` +
     `?apiKey=${PUBLIC_KEY}` +
     `&query.name=${encodeURIComponent(name)}` +
-    `&limit=1&cachebust=true&noTargeting=true`;
+    `&limit=1&cachebust=true&noTargeting=true` +
+    (includeUnpublished ? `&includeUnpublished=true` : ``);
   const res = await fetch(url);
   if (!res.ok) return null;
   const json = await res.json();
@@ -1034,15 +1099,82 @@ async function migrateNavEntryLinks(name) {
   console.log(`✓ Converted "${name}" links to CMSLink values.`);
 }
 
-// Seeds the site-context entry wired to the navigation entries, or patches an
-// existing entry to add any missing navigation references. Sends the full
-// merged `data` so the PATCH can't drop unrelated fields.
-async function ensureSiteContext(headerNavId, footerNavId) {
+// Creates the named header/footer symbol if it does not exist and returns its
+// id. An existing symbol is returned untouched, so an editor's changes to it
+// survive re-runs. Symbols are matched by name.
+//
+// provisionBaselineModels creates the `symbol` model when it is missing, but
+// with --models-from the schema is copied as the source has it, so the model
+// can still be absent (the Content API answers 404 "Model not found"). When the
+// write fails because the model is missing, this fails soft: it warns, returns null, and
+// ensureSiteContext leaves defaultHeader/defaultFooter unset. The site then
+// renders the bare Header/Footer. Re-run after the model exists.
+async function ensureSymbol(name, componentName, navId, theme) {
+  const existing = await getEntry(SYMBOL_MODEL_NAME, name, true);
+  if (existing) {
+    console.log(`• Symbol "${name}" already exists — skipping seed.`);
+    return existing.id;
+  }
+  // Same Gen 2 element shape as the home page blocks, with a stable id (a hash
+  // of the symbol name, never random) so re-seeding a space gives the same block.
+  // `theme` is set explicitly so the editor's Theme dropdown shows it (Builder
+  // only applies an input's defaultValue to newly inserted blocks). No `logo`:
+  // the component falls back to the Site context logo.
+  const options = { theme };
+  if (navId) options.navigation = referenceValue(NAV_MODEL_NAME, navId);
+  const block = {
+    "@type": "@builder.io/sdk:Element",
+    "@version": 2,
+    id: `builder-${createHash("sha1").update(name).digest("hex").slice(0, 32)}`,
+    component: { name: componentName, options },
+  };
+  const res = await fetch(writeApi(SYMBOL_MODEL_NAME), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${PRIVATE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name,
+      published: "published",
+      data: { blocks: [block] },
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    if (res.status === 404 || /model.*not found|not found.*model|no such model/i.test(text)) {
+      console.warn(
+        `⚠ Could not create symbol "${name}": the "${SYMBOL_MODEL_NAME}" model does not exist in this space yet.\n` +
+          `  Open the Symbols tab once in Builder (or create any symbol), then re-run this script.\n` +
+          `  Until then the site renders the built-in ${componentName}.`
+      );
+      return null;
+    }
+    throw new Error(`Write API failed (${res.status}): ${text}`);
+  }
+  const created = await res.json();
+  console.log(`✓ Seeded "${SYMBOL_MODEL_NAME}" entry "${name}" (id: ${created.id}).`);
+  return created.id;
+}
+
+// The legacy nav data and fields are only dropped when both symbols resolved,
+// and never for copied schemas, which are left exactly as the source has them.
+function shouldRemoveLegacyNav(headerSymbolId, footerSymbolId) {
+  return !MODELS_FROM && Boolean(headerSymbolId && footerSymbolId);
+}
+
+// Seeds the site-context entry pointing at the default header/footer symbols,
+// or patches an existing entry to set whichever of the two is unset. A value an
+// editor already chose is never overwritten. Legacy navigation keys are
+// cleared only when both symbols exist (so the menus survive until the symbols
+// can be created) and not under --models-from. The Write API's PATCH merges
+// `data`, so a key is cleared by sending it as null, not by leaving it out.
+async function ensureSiteContext(headerSymbolId, footerSymbolId) {
   const refs = {};
-  if (headerNavId)
-    refs.headerNavigation1 = referenceValue(NAV_MODEL_NAME, headerNavId);
-  if (footerNavId)
-    refs.footerNavigation1 = referenceValue(NAV_MODEL_NAME, footerNavId);
+  if (headerSymbolId)
+    refs.defaultHeader = referenceValue(SYMBOL_MODEL_NAME, headerSymbolId);
+  if (footerSymbolId)
+    refs.defaultFooter = referenceValue(SYMBOL_MODEL_NAME, footerSymbolId);
 
   const existing = await getEntry(MODEL_NAME, SITE_CONTEXT_NAME);
   if (!existing) {
@@ -1064,21 +1196,24 @@ async function ensureSiteContext(headerNavId, footerNavId) {
     }
     const created = await res.json();
     console.log(
-      `✓ Seeded "${MODEL_NAME}" entry "${SITE_CONTEXT_NAME}" with navigation references (id: ${created.id}).`
+      `✓ Seeded "${MODEL_NAME}" entry "${SITE_CONTEXT_NAME}" with default header/footer symbols (id: ${created.id}).`
     );
     return;
   }
 
-  // Existing entry: only add references it's missing, then PATCH the merged data.
+  // Existing entry: only set the symbols it is missing and null out the
+  // legacy keys that still hold a value.
   const data = existing.data || {};
   const patch = {};
-  if (headerNavId && !data.headerNavigation1)
-    patch.headerNavigation1 = refs.headerNavigation1;
-  if (footerNavId && !data.footerNavigation1)
-    patch.footerNavigation1 = refs.footerNavigation1;
+  if (refs.defaultHeader && !data.defaultHeader) patch.defaultHeader = refs.defaultHeader;
+  if (refs.defaultFooter && !data.defaultFooter) patch.defaultFooter = refs.defaultFooter;
+  const legacyKeys = shouldRemoveLegacyNav(headerSymbolId, footerSymbolId)
+    ? LEGACY_SITE_CONTEXT_NAV_KEYS.filter((k) => data[k] != null)
+    : [];
+  for (const k of legacyKeys) patch[k] = null;
 
   if (Object.keys(patch).length === 0) {
-    console.log(`• "${SITE_CONTEXT_NAME}" already wired to navigation — skipping.`);
+    console.log(`• "${SITE_CONTEXT_NAME}" already has its header/footer symbols — skipping.`);
     return;
   }
 
@@ -1094,9 +1229,24 @@ async function ensureSiteContext(headerNavId, footerNavId) {
     const text = await res.text();
     throw new Error(`Write API failed (${res.status}): ${text}`);
   }
-  console.log(
-    `✓ Wired ${Object.keys(patch).map((k) => `"${k}"`).join(", ")} on "${SITE_CONTEXT_NAME}".`
-  );
+  const setKeys = Object.keys(patch).filter((k) => patch[k] !== null);
+  if (setKeys.length) {
+    console.log(`✓ Set ${setKeys.map((k) => `"${k}"`).join(", ")} on "${SITE_CONTEXT_NAME}".`);
+  }
+  if (legacyKeys.length) {
+    console.log(`✓ Removed legacy ${legacyKeys.map((k) => `"${k}"`).join(", ")} from "${SITE_CONTEXT_NAME}".`);
+  }
+}
+
+// Drops the navigation fields the symbols replaced, from the site-context and
+// page models. Run after the menu ids have been read from the site context.
+async function removeLegacyNavFields(models) {
+  for (const key of LEGACY_SITE_CONTEXT_NAV_KEYS) {
+    await removeModelField(MODEL_NAME, key, models);
+  }
+  for (const key of LEGACY_PAGE_NAV_KEYS) {
+    await removeModelField(PAGE_MODEL_NAME, key, models);
+  }
 }
 
 // Seeds or updates the home page. The Gen 2 SDK reads content.data.blocks,
@@ -1219,12 +1369,12 @@ async function provisionBaselineModels() {
     URL_REDIRECT_MODEL_BODY,
     existingNames
   );
+  const createdSymbol = await ensureModel(SYMBOL_MODEL_BODY, existingNames);
 
-  // A pre-existing site-context model predates the navigation reference fields
-  // (which a fresh MODEL_BODY already includes) — add them so the header/footer
-  // can resolve real menus.
+  // A pre-existing site-context model predates the default header/footer symbol
+  // fields (which a fresh MODEL_BODY already includes) — add them.
   if (!createdSiteContext) {
-    await ensureModelHasFields(MODEL_NAME, SITE_CONTEXT_NAV_FIELDS, models);
+    await ensureModelHasFields(MODEL_NAME, SITE_CONTEXT_SYMBOL_FIELDS, models);
   }
 
   // Every page-like model shares the same metadata shape. The built-in `page`
@@ -1234,6 +1384,8 @@ async function provisionBaselineModels() {
     await ensureModelHasFields(ARTICLE_MODEL_NAME, [metaField], models);
   }
   await ensureModelHasFields(PAGE_MODEL_NAME, [metaField], models);
+  // Per-page header/footer symbol overrides.
+  await ensureModelHasFields(PAGE_MODEL_NAME, PAGE_SYMBOL_FIELDS, models);
 
   // The page model's old top-level `description` field is orphaned — SEO
   // description now comes from the shared `metadata` model-field.
@@ -1251,11 +1403,19 @@ async function provisionBaselineModels() {
   if (!createdArticle) {
     await ensurePreviewUrl(ARTICLE_MODEL_NAME, ARTICLE_PREVIEW_URL_LOGIC, models);
   }
-  // The built-in `symbol` model is never created by this script, so always
-  // update it directly (there's no "freshly created" branch to skip here).
-  await ensurePreviewUrl(SYMBOL_MODEL_NAME, SYMBOL_PREVIEW_URL_LOGIC, models);
+  // A symbol model Builder created itself (from the Symbols tab) has no
+  // preview URL; one created above already has it from SYMBOL_MODEL_BODY.
+  if (!createdSymbol) {
+    await ensurePreviewUrl(SYMBOL_MODEL_NAME, SYMBOL_PREVIEW_URL_LOGIC, models);
+  }
 
-  return createdSiteContext || createdArticle || createdNav || createdUrlRedirect;
+  return (
+    createdSiteContext ||
+    createdArticle ||
+    createdNav ||
+    createdUrlRedirect ||
+    createdSymbol
+  );
 }
 
 // Clones another site's model definitions as they are now in its space,
@@ -1304,7 +1464,16 @@ async function main() {
     );
   }
 
-  // Seed the sample menus first, then wire their ids onto site-context.
+  // Read the site context before seeding menus: an existing space may already
+  // have its own menus on the legacy headerNavigation1/footerNavigation1 fields,
+  // and the new symbols must keep showing those rather than the sample menus.
+  const existingSiteContext = hasModel(MODEL_NAME)
+    ? await getEntry(MODEL_NAME, SITE_CONTEXT_NAME)
+    : null;
+  const legacyHeaderNavId = existingSiteContext?.data?.headerNavigation1?.id ?? null;
+  const legacyFooterNavId = existingSiteContext?.data?.footerNavigation1?.id ?? null;
+
+  // Seed the sample menus first; the default symbols reference them.
   let headerNavId = null;
   let footerNavId = null;
   if (hasModel(NAV_MODEL_NAME)) {
@@ -1321,8 +1490,15 @@ async function main() {
     await migrateNavEntryLinks(PRIMARY_NAV_NAME);
     await migrateNavEntryLinks(FOOTER_NAV_NAME);
   }
+  headerNavId = legacyHeaderNavId ?? headerNavId;
+  footerNavId = legacyFooterNavId ?? footerNavId;
+
+  // Default header/footer symbols (null when the symbol model is missing), then
+  // point the site context at them.
+  const headerSymbolId = await ensureSymbol(HEADER_SYMBOL_NAME, "Header", headerNavId, "light");
+  const footerSymbolId = await ensureSymbol(FOOTER_SYMBOL_NAME, "Footer", footerNavId, "dark");
   if (hasModel(MODEL_NAME)) {
-    await ensureSiteContext(headerNavId, footerNavId);
+    await ensureSiteContext(headerSymbolId, footerSymbolId);
   }
 
   // Seed the sample redirect entry. next.config.ts reads this model by name at
@@ -1353,6 +1529,18 @@ async function main() {
     // mutation, so remind the user to apply it in the Builder.io Settings UI.
     await ensureSiteUrl(BUILDER_SITE_URL);
     printSpaceDescriptionReminder(BUILDER_SPACE_DESCRIPTION);
+  }
+
+  // The legacy nav fields go last, after the menu ids above were read from them,
+  // and only once both symbols exist so a re-run can still read the space's menus.
+  // Skipped for copied schemas, which are left exactly as the source has them.
+  if (shouldRemoveLegacyNav(headerSymbolId, footerSymbolId)) {
+    const { models: latestModels } = await client.request(LIST_MODELS);
+    await removeLegacyNavFields(latestModels);
+  } else if (!MODELS_FROM) {
+    console.log(
+      "\n• Kept the legacy navigation fields until the default header/footer symbols can be created."
+    );
   }
 
   // The CMSLink plugin must be installed manually via the Builder.io UI.

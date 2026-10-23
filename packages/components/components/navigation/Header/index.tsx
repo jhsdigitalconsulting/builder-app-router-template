@@ -3,14 +3,15 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
-import { Navigation } from "@repo/types";
+import { ModelReference, Navigation, Themeable } from "@repo/types";
+import { getNavItems } from "../../../utils/navigation";
 import { useSiteContext } from "../../../contexts/SiteContextProvider";
 import { HeaderNavItem } from "./HeaderNavItem";
 import { MobileMenu } from "./MobileMenu";
 
-interface HeaderProps {
+interface HeaderProps extends Themeable {
   logo?: string;
-  navigation?: Navigation;
+  navigation?: ModelReference;
 }
 
 const defaultNavigation: Navigation = {
@@ -40,21 +41,24 @@ const defaultNavigation: Navigation = {
   lastUpdatedBy: "",
 };
 
-const Header = ({ navigation = defaultNavigation, logo }: HeaderProps) => {
+const Header = ({ navigation, logo, theme = "light" }: HeaderProps) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  const navItems = (navigation || defaultNavigation).data.level1;
-
-  // The Builder SDK passes "" for an unset string input, which bypasses JS
-  // default parameters (those only apply to `undefined`). Coalesce any
-  // empty/undefined value so next/image never receives an empty src.
-  const logoSrc = logo || "https://placehold.co/400x100.png?text=Logo";
+  const navItems = getNavItems(navigation, defaultNavigation);
 
   const { siteContext } = useSiteContext();
 
+  // An unset logo binds to the Site context's logo, then a placeholder. The
+  // Builder SDK passes "" for an unset input, which bypasses JS default
+  // parameters, so coalesce with `||` and never hand next/image an empty src.
+  const logoSrc =
+    logo ||
+    siteContext?.data?.logo ||
+    "https://placehold.co/400x100.png?text=Logo";
+
   return (
     <header
-      data-theme="light"
+      data-theme={theme}
       className="font-primary border-b border-gray-200"
       style={{ backgroundColor: "var(--theme-bg)", color: "var(--theme-text)" }}
     >
