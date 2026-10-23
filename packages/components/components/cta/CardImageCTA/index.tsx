@@ -1,6 +1,6 @@
 import { FC } from "react";
 import Image from "next/image";
-import { Themeable, Alignable, TextAlignments } from "@repo/types";
+import { Themeable, Alignable, TextAlignments, LinkValue } from "@repo/types";
 import Button from "../../ui/Button";
 import { ThemeProvider } from "../../common/ThemeProvider";
 
@@ -9,7 +9,7 @@ interface CardImageCTAProps extends Themeable, Alignable {
   eyebrow: string;
   title: string;
   buttonLabel?: string;
-  buttonHref?: string;
+  buttonHref?: LinkValue;
   className?: string;
 }
 

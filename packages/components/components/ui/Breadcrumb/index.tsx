@@ -1,11 +1,12 @@
 import React, { FC } from "react";
 import Link from "next/link";
 import { ThemeProvider } from "../../common/ThemeProvider";
-import { Themeable } from "@repo/types";
+import { Themeable, LinkValue } from "@repo/types";
+import { resolveLinkHref, hasLinkHref } from "../../../utils/links";
 
 export interface BreadcrumbTrailItem {
   label: string;
-  href?: string;
+  href?: LinkValue;
 }
 
 export interface BreadcrumbProps extends Themeable {
@@ -31,9 +32,9 @@ const Breadcrumb: FC<BreadcrumbProps> = ({
           const isLast = i === items.length - 1;
           return (
             <li key={i} className="flex flex-row items-center gap-2">
-              {item.href && !isLast ? (
+              {hasLinkHref(item.href) && !isLast ? (
                 <Link
-                  href={item.href}
+                  href={resolveLinkHref(item.href)}
                   className="text-theme-heading-alt hover:underline"
                 >
                   {item.label}

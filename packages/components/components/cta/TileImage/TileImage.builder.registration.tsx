@@ -49,9 +49,9 @@ export const registration: RegisteredComponent[] = [
       },
       {
         name: "buttonHref",
-        type: "string",
-        defaultValue: "#",
-        helperText: "URL where the button should link to",
+        type: "CMSLink",
+        defaultValue: { type: "url", href: "#" },
+        helperText: "Where the button links to: a page or entry in Builder, or an external URL",
         showIf: "options.get('buttonLabel')",
       },
       ...commonInputs,

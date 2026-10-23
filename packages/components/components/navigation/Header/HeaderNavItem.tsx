@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Level1Item, Level2Item } from "@repo/types";
+import { resolveLinkHref } from "../../../utils/links";
 
 interface HeaderNavItemProps {
   item: Level1Item;
@@ -37,7 +38,7 @@ const HeaderNavItem = ({ item, onNavigate }: HeaderNavItemProps) => {
         </button>
       ) : (
         <Link
-          href={item.href || "/"}
+          href={resolveLinkHref(item.href, "/")}
           className={`flex items-center ${topLinkClass}`}
           style={linkStyle}
           onClick={onNavigate}
@@ -60,7 +61,7 @@ const HeaderNavItem = ({ item, onNavigate }: HeaderNavItemProps) => {
                       style={linkStyle}
                     >
                       {level2Item.href ? (
-                        <Link href={level2Item.href} onClick={onNavigate} className="flex-1 text-left">
+                        <Link href={resolveLinkHref(level2Item.href)} onClick={onNavigate} className="flex-1 text-left">
                           {level2Item.text}
                         </Link>
                       ) : (
@@ -74,7 +75,7 @@ const HeaderNavItem = ({ item, onNavigate }: HeaderNavItemProps) => {
                       {level2Item.level3!.map((level3Item) => (
                         <Link
                           key={level3Item.text}
-                          href={level3Item.href}
+                          href={resolveLinkHref(level3Item.href)}
                           className="block px-4 py-2 text-sm transition-colors hover:bg-gray-50 hover:text-[color:var(--theme-link)]"
                           style={linkStyle}
                           onClick={onNavigate}
@@ -86,7 +87,7 @@ const HeaderNavItem = ({ item, onNavigate }: HeaderNavItemProps) => {
                   </>
                 ) : (
                   <Link
-                    href={level2Item.href}
+                    href={resolveLinkHref(level2Item.href)}
                     className="block px-4 py-2 text-sm transition-colors hover:bg-gray-50 hover:text-[color:var(--theme-link)]"
                     style={linkStyle}
                     onClick={onNavigate}

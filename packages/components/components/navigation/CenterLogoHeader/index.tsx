@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
 import { Navigation, Level1Item, Level2Item } from "@repo/types";
+import { resolveLinkHref } from "../../../utils/links";
 import { useSiteContext } from "../../../contexts/SiteContextProvider";
 
 interface CenterLogoHeaderProps {
@@ -133,7 +134,7 @@ const CenterLogoHeader = ({
           </button>
         ) : (
           <Link
-            href={item.href || "/"}
+            href={resolveLinkHref(item.href, "/")}
             className="font-bold text-[11px] tracking-[2.2px] uppercase transition-colors"
             style={{ color: 'var(--theme-text)' }}
             onMouseEnter={(e) => e.currentTarget.style.color = 'var(--theme-link)'}
@@ -191,7 +192,7 @@ const CenterLogoHeader = ({
                           {level2Item.level3!.map((level3Item) => (
                             <Link
                               key={level3Item.text}
-                              href={level3Item.href}
+                              href={resolveLinkHref(level3Item.href)}
                               className="block px-4 py-2 text-sm hover:bg-gray-50 transition-colors"
                               style={{ color: 'var(--theme-text)' }}
                               onMouseEnter={(e) => e.currentTarget.style.color = 'var(--theme-link)'}
@@ -209,7 +210,7 @@ const CenterLogoHeader = ({
                     </>
                   ) : (
                     <Link
-                      href={level2Item.href}
+                      href={resolveLinkHref(level2Item.href)}
                       className="block px-4 py-2 text-sm hover:bg-gray-50 transition-colors"
                       style={{ color: 'var(--theme-text)' }}
                       onMouseEnter={(e) => e.currentTarget.style.color = 'var(--theme-link)'}
@@ -325,7 +326,7 @@ const CenterLogoHeader = ({
               {mobileNavItems.map((item) => (
                 <li key={item.text}>
                   <Link
-                    href={item.href || "/"}
+                    href={resolveLinkHref(item.href, "/")}
                     className="block font-bold text-[11px] tracking-[2.2px] uppercase transition-colors"
                     style={{ color: 'var(--theme-text)' }}
                     onMouseEnter={(e) => e.currentTarget.style.color = 'var(--theme-link)'}

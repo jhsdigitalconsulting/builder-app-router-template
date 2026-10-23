@@ -26,12 +26,12 @@ export const registration: RegisteredComponent[] = [
           },
           {
             name: "href",
-            type: "url",
-            helperText: "Link target. Leave blank for the current page.",
+            type: "CMSLink",
+            helperText: "Link target: a page or entry in Builder, or a URL. Leave blank for the current page.",
           },
         ],
         defaultValue: [
-          { label: "About us", href: "/about-us" },
+          { label: "About us", href: { type: "url", href: "/about-us" } },
           { label: "Current page" },
         ],
       },

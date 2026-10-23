@@ -5,6 +5,7 @@ import {
   type BuilderContextInterface,
 } from "@builder.io/sdk-react";
 import { Navigation, Themeable, Alignable, Heroic } from "@repo/types";
+import { resolveLinkHref } from "../../../utils/links";
 import { ThemeProvider } from "../../common/ThemeProvider";
 
 interface VerticalNavProps extends Themeable, Alignable, Heroic {
@@ -53,7 +54,7 @@ const VerticalNavigation: FC<VerticalNavProps> = ({
                 {navigation.data.level1.map((item) => (
                   <li key={item.text}>
                     <a
-                      href={item.href}
+                      href={resolveLinkHref(item.href)}
                     >
                       {item.text}
                     </a>

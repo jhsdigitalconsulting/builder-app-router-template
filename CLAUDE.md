@@ -164,6 +164,25 @@ This project uses the Gen 2 React SDK (`@builder.io/sdk-react`), which is built 
 4. Add a co-located `{Name}.stories.tsx` and export the folder from `packages/components/index.ts`
 5. `withImage()` reads the `NEXT_DEFAULT_COMPONENT_IMAGE` env var for the editor thumbnail
 
+**Link fields (required): always use the `CMSLink` input**
+- Every link field on a CMS model or registered component uses `type: "CMSLink"`, never
+  `string`, `text`, or `url`. The editor comes from the `@jhsdc/builder-input-types` plugin
+  (source in `plugins/builder-input-types`, also listed in the Builder.io marketplace as
+  **CMS Link**), which must be installed in the Builder space.
+- Its value is `CMSLinkProps` (`{ type: "url" | "model", href, model?, referenceId? }`).
+  `type: "model"` links point at an entry and resolve through the
+  `/dynamiclink/{model}/builder/{id}` route, so they keep working when a slug changes.
+- Type link props as `LinkValue` (`CMSLinkProps | string`, from `@repo/types`). The string
+  case keeps content saved before the conversion working.
+- Never read `.href` off a link directly. Resolve it with `resolveLinkHref(link, fallback)`
+  (and `shouldOpenInNewTab` / `hasLinkHref` as needed) from
+  `packages/components/utils/links.ts`, or render through `DynamicLink`.
+- Default value: `{ type: "url", href: "#" }`. Seed content uses the same shape
+  (`urlLink()` in `scripts/seed-builder.mjs`).
+- Exceptions (keep as plain strings): external-only social profile URLs
+  (`socialNetworks[].href`), redirect rules (`urlFrom`/`urlTo`), and schema.org data URLs.
+- See `docs/DESIGN_PATTERNS.md` section 6.4 for the full pattern.
+
 **Insert Menus Structure:**
 - Navigation - Header/Footer components
 - UI - Basic interface elements
@@ -192,6 +211,7 @@ This project uses the Gen 2 React SDK (`@builder.io/sdk-react`), which is built 
 **Registration Requirements:**
 - All components must be registered with Builder.io
 - Include appropriate inputs with helper text
+- Use the `CMSLink` input type for every link field (see "Link fields" above)
 - Set component images to environment variable value
 - Register in correct insert menu category
 

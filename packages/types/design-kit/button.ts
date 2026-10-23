@@ -1,3 +1,5 @@
+import type { LinkValue } from "../cms";
+
 export const buttonInputs = [
     {
       name: "buttonLabel",
@@ -7,13 +9,13 @@ export const buttonInputs = [
     },
     {
       name: "buttonHref",
-      type: "string",
-      defaultValue: "#",
-      helperText: "Call-to-action button URL",
+      type: "CMSLink",
+      defaultValue: { type: "url", href: "#" },
+      helperText: "Where the button links to: a page or entry in Builder, or an external URL",
     },
   ] as const;
 
   export interface Button {
     buttonLabel: string;
-    buttonHref: string;
+    buttonHref: LinkValue;
   }

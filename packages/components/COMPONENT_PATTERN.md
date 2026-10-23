@@ -156,6 +156,9 @@ override, or `DesignKitOverview`) still renders — it just can't be inserted fr
 3. **If registered:** add `...{name}` to the matching `registry/{category}.ts` barrel.
 4. **If registered:** add the component's `name` to the right group in
    `packages/components/registration/insert-menus.ts`.
-5. `{Name}.stories.tsx` co-located, importing from `./index`.
-6. Export the folder from `packages/components/index.ts`.
-7. `pnpm build`, `pnpm lint`, and `pnpm build:storybook` — all green.
+5. **If it has links:** every link input is `type: "CMSLink"`, the prop is typed
+   `LinkValue`, and it renders via `resolveLinkHref` from `utils/links.ts` (see
+   `docs/DESIGN_PATTERNS.md` section 6.4).
+6. `{Name}.stories.tsx` co-located, importing from `./index`.
+7. Export the folder from `packages/components/index.ts`.
+8. `pnpm build`, `pnpm lint`, and `pnpm build:storybook` — all green.

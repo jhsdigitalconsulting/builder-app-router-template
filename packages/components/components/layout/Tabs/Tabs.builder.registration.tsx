@@ -62,9 +62,10 @@ export const registration: RegisteredComponent[] = [
           },
           {
             name: "href",
-            type: "string",
+            type: "CMSLink",
+            defaultValue: { type: "url", href: "#" },
             showIf: (options) => options.get("type") === "link",
-            helperText: "URL to navigate to when tab link is clicked",
+            helperText: "Where the tab links to: a page or entry in Builder, or an external URL",
           },
         ],
         helperText: "List of tabs to display",

@@ -1,32 +1,17 @@
 import React from "react";
 import Link from "next/link";
 import { ThemeProvider } from "../../common/ThemeProvider";
-import type { CMSLinkProps, Themeable, Stylable } from "@repo/types";
+import type { CMSLinkProps, LinkValue, Themeable, Stylable } from "@repo/types";
+import { resolveLinkHref, shouldOpenInNewTab, isExternalHref } from "../../../utils/links";
 
 interface DynamicLinkComponentProps extends Themeable, Stylable {
-  link?: CMSLinkProps | string;
+  link?: LinkValue;
   label?: string;
   children?: React.ReactNode;
   openInNewTab?: boolean;
   title?: string;
   ariaLabel?: string;
   onClick?: (event: React.MouseEvent<HTMLAnchorElement>) => void;
-}
-
-function resolveHref(link: CMSLinkProps | string | undefined): string {
-  if (!link) return "#";
-  if (typeof link === "string") return link;
-  if (link.type === "model") {
-    if (!link.model || !link.referenceId) return link.href || "#";
-    return `/dynamiclink/${link.model}/builder/${link.referenceId}`;
-  }
-  return link.href || "#";
-}
-
-function shouldOpenInNewTab(link: CMSLinkProps | string | undefined, override?: boolean): boolean {
-  if (override) return true;
-  if (link && typeof link !== "string" && link.openInNewTab) return true;
-  return false;
 }
 
 export const DynamicLink = ({
@@ -41,9 +26,9 @@ export const DynamicLink = ({
   theme = "light",
   inheritTheme = true,
 }: DynamicLinkComponentProps) => {
-  const href = resolveHref(link);
+  const href = resolveLinkHref(link);
   const newTab = shouldOpenInNewTab(link, openInNewTab);
-  const isExternal = href.startsWith("http://") || href.startsWith("https://");
+  const isExternal = isExternalHref(href);
 
   const linkProps: React.AnchorHTMLAttributes<HTMLAnchorElement> = {
     className,

@@ -30,9 +30,9 @@ const buttonInputs: Inputs = [
   },
   {
     name: "href",
-    type: "string",
-    defaultValue: "#",
-    helperText: "The URL the button should link to",
+    type: "CMSLink",
+    defaultValue: { type: "url", href: "#" },
+    helperText: "Where the button links to: a page or entry in Builder, or an external URL",
   },
   {
     name: "className",
