@@ -104,7 +104,7 @@ const Footer = ({
                 return (
                   <a
                     key={social.name}
-                    href={social.href}
+                    href={resolveLinkHref(social.href)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="hover:text-theme-link text-theme-text"
