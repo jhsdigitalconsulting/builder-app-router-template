@@ -95,7 +95,7 @@ const SITE_CONTEXT_NAME =
   process.env.NEXT_PUBLIC_SITE_CONTEXT_NAME || "builder-app-template";
 const BUILDER_SITE_URL = process.env.BUILDER_SITE_URL || "";
 const BUILDER_SPACE_DESCRIPTION = process.env.BUILDER_SPACE_DESCRIPTION || "";
-// Placeholder image text naming the site, e.g. "amicosecurity" → ?text=amicosecurity.
+// Placeholder image text naming the site, e.g. "acme-blog" → ?text=acme-blog.
 const SITE_NAME_IMAGE_TEXT = encodeURIComponent(SITE_CONTEXT_NAME).replace(/%20/g, "+");
 
 const MODEL_NAME = "site-context";

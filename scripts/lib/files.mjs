@@ -34,8 +34,8 @@ export function replaceInFile(filePath, from, to) {
   if (updated !== original) writeFileSync(filePath, updated);
 }
 
-// Replaces an app name only where it stands alone, so renaming `amico` leaves
-// `amicosecurity` or `amico-web` untouched.
+// Replaces an app name only where it stands alone, so renaming `acme` leaves
+// `acme-blog` or `acme-web` untouched.
 export function replaceAppNameInFile(filePath, from, to) {
   if (!existsSync(filePath)) return;
   const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
