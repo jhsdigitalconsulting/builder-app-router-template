@@ -8,11 +8,13 @@ interface RouteParams {
 
 interface FetchResult {
   url?: string;
-  slug?: string;
+  handle?: string;
 }
 
-const SLUG_BASED_MODELS: Record<string, (slug: string) => string> = {
-  article: (slug) => `/blogs/${slug}`,
+// Models whose entries have no `url` field: the route is built from the
+// entry's `handle` (see ArticleData in @repo/types and app/blogs/[handle]).
+const HANDLE_BASED_MODELS: Record<string, (handle: string) => string> = {
+  article: (handle) => `/blogs/${handle}`,
 };
 
 function toGraphQLModelName(model: string): string {
@@ -30,7 +32,7 @@ async function fetchContent(
   const { data } = await response.json();
   const record = data?.[model]?.[0]?.data;
   if (!record) return null;
-  return { url: record.url, slug: record.slug };
+  return { url: record.url, handle: record.handle };
 }
 
 export async function GET(
@@ -51,8 +53,8 @@ export async function GET(
   try {
     const endpoint = `https://cdn.builder.io/api/v3/graphql/${apiKey}`;
     const graphQLModel = toGraphQLModelName(model);
-    const useSlug = model in SLUG_BASED_MODELS;
-    const dataFields = useSlug ? "slug" : "url";
+    const useHandle = model in HANDLE_BASED_MODELS;
+    const dataFields = useHandle ? "handle" : "url";
 
     let graphQLQuery = `query { ${graphQLModel}(query: { id: "${id}" }) { data { ${dataFields} } } }`;
     let result = await fetchContent(endpoint, graphQLQuery, graphQLModel);
@@ -64,11 +66,11 @@ export async function GET(
     }
 
     if (result) {
-      const slugMapper = SLUG_BASED_MODELS[model];
+      const handleMapper = HANDLE_BASED_MODELS[model];
       let destination: string | null = null;
 
-      if (slugMapper && result.slug) {
-        destination = slugMapper(result.slug);
+      if (handleMapper && result.handle) {
+        destination = handleMapper(result.handle);
       } else if (result.url) {
         destination = result.url;
       }

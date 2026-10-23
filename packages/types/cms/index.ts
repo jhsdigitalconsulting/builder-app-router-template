@@ -8,21 +8,26 @@ export interface CMSLinkProps {
   openInNewTab?: boolean;
 }
 
+// Any link field read from Builder. New content stores a CMSLinkProps object;
+// a plain string is still accepted so content saved before the CMSLink
+// conversion keeps working. Resolve with resolveLinkHref from @repo/components.
+export type LinkValue = CMSLinkProps | string;
+
 export interface Level3Item {
   text: string;
-  href: string;
+  href: LinkValue;
 }
 
 export interface Level2Item {
   text: string;
-  href: string;
+  href: LinkValue;
   level3?: Level3Item[];
 }
 
 export interface Level1Item {
   text: string;
   level2?: Level2Item[];
-  href?: string;
+  href?: LinkValue;
 }
 
 export interface NavigationData {

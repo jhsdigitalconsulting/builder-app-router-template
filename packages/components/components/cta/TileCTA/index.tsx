@@ -1,13 +1,13 @@
 import { FC } from "react";
 import Button from "../../ui/Button";
-import { Themeable, Alignable, TextAlignments, Heroic } from "@repo/types";
+import { Themeable, Alignable, TextAlignments, Heroic, LinkValue } from "@repo/types";
 import { ThemeProvider } from "../../common/ThemeProvider";
 
 interface TileCTAProps extends Themeable, Alignable, Heroic {
   eyebrow?: string;
   content?: string;
   buttonLabel?: string;
-  buttonHref?: string;
+  buttonHref?: LinkValue;
   className?: string;
   maskOpacity?: number;
 }

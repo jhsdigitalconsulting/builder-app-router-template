@@ -1,3 +1,5 @@
+import type { LinkValue } from "../cms";
+
 export const ctaInputs = [
     {
       name: "ctaText",
@@ -7,9 +9,9 @@ export const ctaInputs = [
     },
     {
       name: "ctaUrl",
-      type: "string",
-      defaultValue: "#",
-      helperText: "Primary call-to-action URL",
+      type: "CMSLink",
+      defaultValue: { type: "url", href: "#" },
+      helperText: "Where the primary call to action links to: a page or entry in Builder, or an external URL",
     },
     {
       name: "secondaryCtaText",
@@ -19,15 +21,15 @@ export const ctaInputs = [
     },
     {
       name: "secondaryCtaUrl",
-      type: "string",
-      defaultValue: "#",
-      helperText: "Secondary call-to-action URL",
+      type: "CMSLink",
+      defaultValue: { type: "url", href: "#" },
+      helperText: "Where the secondary call to action links to",
     },
   ] as const;
 
   export interface CTA {
     ctaText: string;
-    ctaUrl: string;
+    ctaUrl: LinkValue;
     secondaryCtaText?: string;
-    secondaryCtaUrl?: string;
+    secondaryCtaUrl?: LinkValue;
   }

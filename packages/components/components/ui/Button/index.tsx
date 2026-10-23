@@ -1,10 +1,11 @@
 import { FC } from "react";
-import { Themeable } from "@repo/types";
+import { Themeable, LinkValue } from "@repo/types";
+import { resolveLinkHref, shouldOpenInNewTab } from "../../../utils/links";
 import { ThemeProvider } from "../../common/ThemeProvider";
 
 interface ButtonProps extends Themeable {
   label: string;
-  href?: string;
+  href?: LinkValue;
   className?: string;
   onClick?: () => void;
   outlined?: boolean;
@@ -12,13 +13,17 @@ interface ButtonProps extends Themeable {
 
 const Button: FC<ButtonProps> = ({
   label,
-  href = "#",
+  href,
   className = "",
   theme,
   inheritTheme = true,
   outlined = false,
   onClick,
 }) => {
+  const resolvedHref = resolveLinkHref(href);
+  const newTabProps = shouldOpenInNewTab(href)
+    ? { target: "_blank", rel: "noopener noreferrer" }
+    : {};
   const buttonClasses = outlined 
     ? "btn btn-outlined"
     : "btn btn-primary";
@@ -28,7 +33,8 @@ const Button: FC<ButtonProps> = ({
     // Inherit theme from parent - no ThemeProvider wrapper needed
     return (
       <a
-        href={href}
+        href={resolvedHref}
+        {...newTabProps}
         className={`${buttonClasses} ${className}`}
         onClick={onClick}
       >
@@ -41,7 +47,8 @@ const Button: FC<ButtonProps> = ({
   return (
     <ThemeProvider theme={theme} inheritTheme={false}>
       <a
-        href={href}
+        href={resolvedHref}
+        {...newTabProps}
         className={`${buttonClasses} ${className}`}
         onClick={onClick}
       >

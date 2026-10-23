@@ -6,13 +6,14 @@ import {
   type BuilderContextInterface,
 } from "@builder.io/sdk-react";
 import { useState } from "react";
-import { Themeable, getThemeClasses, Heroic, Stylable } from "@repo/types";
+import { Themeable, getThemeClasses, Heroic, Stylable, LinkValue } from "@repo/types";
+import { resolveLinkHref } from "../../../utils/links";
 
 export interface TabItem {
   headline: string;
   content?: { blocks: BuilderBlock[] };
   type: "content" | "link";
-  href?: string;
+  href?: LinkValue;
 }
 
 interface TabsProps extends Themeable, Heroic, Stylable {
@@ -57,7 +58,7 @@ export const Tabs = ({ tabs = [], theme = "light", builderBlock, builderContext,
               tab.type === "link" ? (
                 <a
                   key={index}
-                  href={tab.href || "#"}
+                  href={resolveLinkHref(tab.href)}
                   className="px-6 py-4 text-sm font-medium whitespace-nowrap text-theme-text hover:text-theme-heading transition-colors duration-200"
                 >
                   {tab.headline}

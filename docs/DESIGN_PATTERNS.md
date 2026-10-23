@@ -334,7 +334,7 @@ import Button from "./index";
 const buttonInputs: Inputs = [
   ...themeableInputs,
   { name: "label", type: "string", required: true, defaultValue: "Learn More", helperText: "The text content of the button" },
-  { name: "href", type: "string", defaultValue: "#", helperText: "The URL the button should link to" },
+  { name: "href", type: "CMSLink", defaultValue: { type: "url", href: "#" }, helperText: "Where the button links to: a page or entry in Builder, or an external URL" },
 ];
 
 export const registration: RegisteredComponent[] = [
@@ -344,12 +344,36 @@ export const registration: RegisteredComponent[] = [
 ```
 > The dual `Core:Button` (hidden override) + `Button` (visible) pattern keeps Builder's built-in mapped to this component while still exposing it in the insert menu. Don't collapse such pairs.
 
-### 6.4 Insert menus & app ownership
+### 6.4 Link fields: always use `CMSLink`
+Every link field on a CMS model or registered component uses the **`CMSLink`** input type. This applies to component inputs, list `subFields`, shared bundles (`buttonInputs`, `ctaInputs`), and data-model fields (such as `navigation`'s `href` at every level). Never model a link as `string`, `text`, or `url`.
+
+- **Editor:** the `@jhsdc/builder-input-types` plugin (source in `plugins/builder-input-types`, also listed in the Builder.io marketplace as CMS Link) registers the `CMSLink` editor. It must be installed in the Builder space. The seed script reminds you if it isn't.
+- **Value shape:** `CMSLinkProps` from `@repo/types`:
+  ```ts
+  { type: "url" | "model"; href: string; model?: string; referenceId?: string; openInNewTab?: boolean }
+  ```
+  `type: "url"` is a literal URL. `type: "model"` references a Builder entry. It resolves at request time through `apps/app-0/app/dynamiclink/[model]/[type]/[id]/route.ts`, which looks up the entry's `url` (or builds `/blogs/{handle}` for articles), so the link follows the entry when its slug changes.
+- **Props:** type link props as `LinkValue` (`CMSLinkProps | string`). The string case keeps content that was saved before the conversion working.
+- **Rendering:** never read `link.href` directly. Use `resolveLinkHref(link, fallback)`, `shouldOpenInNewTab(link)`, `hasLinkHref(link)` and `isExternalHref(href)` from `packages/components/utils/links.ts`, or render through `DynamicLink`.
+- **Defaults and seed data:** `defaultValue: { type: "url", href: "#" }`. Seeded entries use `urlLink("/path")` in `scripts/seed-builder.mjs`.
+- **Exceptions:** fields that can only ever hold an external URL or a pattern, not a link an editor picks: `socialNetworks[].href`, `url-redirect` `urlFrom`/`urlTo`, and schema.org data URLs.
+
+```tsx
+// Registration
+{ name: "buttonHref", type: "CMSLink", defaultValue: { type: "url", href: "#" },
+  helperText: "Where the button links to: a page or entry in Builder, or an external URL" },
+
+// Component
+interface TileProps { buttonHref?: LinkValue }
+<a href={resolveLinkHref(buttonHref)}>...</a>
+```
+
+### 6.5 Insert menus & app ownership
 - Component **names** are grouped into menus in `packages/components/registration/insert-menus.ts` (Navigation, UI, Layout, CTA, SEO) — but the **app** owns what actually ships and registers:
   - `apps/app-0/registry/index.ts` — final `customComponents` list (start from package defaults; filter/append/override here).
   - `apps/app-0/registry/register.ts` — client-only `registerEditor()` calling `register("insertMenu", ...)` and `registerDesignTokens(...)`. **Must run only in the browser** (`register` touches browser globals).
 
-### 6.5 New-component checklist
+### 6.6 New-component checklist
 1. Create `components/{category}/{Name}/index.tsx` with `Props` interface + named & default export.
 2. If registered: add `{Name}.builder.registration.tsx` exporting `registration`, importing inputs + `withImage()` from `registry/shared.ts`.
 3. If registered: spread `registration` into `registry/{category}.ts`, and add the component `name` to the matching menu group in `registration/insert-menus.ts`.
@@ -361,6 +385,7 @@ export const registration: RegisteredComponent[] = [
 - **DO** keep prop interfaces in `index.tsx`, simple (no `Omit`/`Pick`/`NonNullable`).
 - **DO** import inputs/`withImage` from `registry/shared.ts` only.
 - **DO** give every input `helperText`.
+- **DO** model every link field as `type: "CMSLink"`, type it `LinkValue`, and resolve it with `resolveLinkHref` (section 6.4).
 - **DON'T** import sibling components from `@repo/components` inside a story — use relative paths (self-import breaks the Storybook build).
 - **DON'T** split registration logic across the app and package incorrectly: the **package** provides defaults, the **app** owns the final list, menus, and tokens.
 
@@ -438,6 +463,7 @@ const eslintConfig = [
 - Simple prop interfaces — no `Omit`/`Pick`/`NonNullable`.
 - Self-contained component folders; inputs + `withImage()` from `registry/shared.ts`.
 - Theme via `--theme-*` Tailwind classes; never hardcode hex; update **all** theme files when adding a slot.
+- Every link field is a `CMSLink` input; resolve with `resolveLinkHref`, never read `.href` directly.
 - Redirects live in Builder's `url-redirect` model; build-time, fail-open.
 - `proxy.ts` (not `middleware.ts`); keep the matcher tight for MIU.
 - `revalidate` is always a literal; wrap reused fetches in `React.cache()`.

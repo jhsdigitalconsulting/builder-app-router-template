@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { Navigation, SocialNetwork, Themeable } from "@repo/types";
+import { resolveLinkHref } from "../../../utils/links";
 import { socialNetworkIconStyles, SocialNetworkName } from "@repo/types/social";
 import { useSiteContext } from "../../../contexts/SiteContextProvider";
 
@@ -82,7 +83,7 @@ const Footer = ({
                   <div className="disc-none" key={item.text}>
                     <Link
                       className="hover:text-theme-link text-theme-text"
-                      href={item.href || "/"}
+                      href={resolveLinkHref(item.href, "/")}
                     >
                       {item.text}
                     </Link>

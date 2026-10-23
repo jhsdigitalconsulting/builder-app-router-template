@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Level1Item, Level2Item } from "@repo/types";
+import { resolveLinkHref } from "../../../utils/links";
 
 interface MobileMenuProps {
   items: Level1Item[];
@@ -87,7 +88,7 @@ const MobileMenu = ({ items, isOpen, onClose }: MobileMenuProps) => {
                                     {level2Item.level3!.map((level3Item) => (
                                       <li key={level3Item.text}>
                                         <Link
-                                          href={level3Item.href}
+                                          href={resolveLinkHref(level3Item.href)}
                                           className="block py-2 text-sm transition-colors"
                                           style={{ color: "var(--theme-text)" }}
                                           onClick={onClose}
@@ -101,7 +102,7 @@ const MobileMenu = ({ items, isOpen, onClose }: MobileMenuProps) => {
                               </>
                             ) : (
                               <Link
-                                href={level2Item.href}
+                                href={resolveLinkHref(level2Item.href)}
                                 className="block py-2 text-sm transition-colors"
                                 style={{ color: "var(--theme-text)" }}
                                 onClick={onClose}
@@ -117,7 +118,7 @@ const MobileMenu = ({ items, isOpen, onClose }: MobileMenuProps) => {
                 </>
               ) : (
                 <Link
-                  href={item.href || "/"}
+                  href={resolveLinkHref(item.href, "/")}
                   className={`${linkClasses} py-2`}
                   style={{ color: "var(--theme-text)" }}
                   onClick={onClose}

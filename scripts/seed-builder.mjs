@@ -346,6 +346,15 @@ const SAMPLE_ARTICLE_DATA = {
   },
 };
 
+// A CMSLink value (see CMSLinkProps in @repo/types) pointing at a plain URL.
+// Every link field in this project uses the CMSLink editor from the
+// @jhsdc/builder-input-types plugin, so seeded content stores links in the
+// same shape.
+const urlLink = (href) => ({ type: "url", href });
+
+const NAV_HREF_HELPER =
+  "Where this item links to: a page or entry in Builder, or an external URL.";
+
 // --- navigation model definition (mirrors NavigationData in @repo/types) ---
 // kind: "data" — entries are a nested level1 → level2 → level3 menu tree.
 const NAV_MODEL_BODY = {
@@ -357,17 +366,17 @@ const NAV_MODEL_BODY = {
       helperText: "Top-level navigation items.",
       subFields: [
         field("text", "text", { required: true }),
-        field("href", "url"),
+        field("href", "CMSLink", { helperText: NAV_HREF_HELPER }),
         field("level2", "list", {
           helperText: "Dropdown items under this top-level item.",
           subFields: [
             field("text", "text", { required: true }),
-            field("href", "url"),
+            field("href", "CMSLink", { helperText: NAV_HREF_HELPER }),
             field("level3", "list", {
               helperText: "Nested items under this dropdown item.",
               subFields: [
                 field("text", "text", { required: true }),
-                field("href", "url"),
+                field("href", "CMSLink", { helperText: NAV_HREF_HELPER }),
               ],
             }),
           ],
@@ -380,33 +389,33 @@ const NAV_MODEL_BODY = {
 const PRIMARY_NAV_NAME = "primary-navigation";
 const PRIMARY_NAV_DATA = {
   level1: [
-    { text: "Home", href: "/" },
+    { text: "Home", href: urlLink("/") },
     {
       text: "About",
-      href: "/about",
+      href: urlLink("/about"),
       level2: [
-        { text: "Our Story", href: "/about/our-story" },
-        { text: "Team", href: "/about/team" },
+        { text: "Our Story", href: urlLink("/about/our-story") },
+        { text: "Team", href: urlLink("/about/team") },
       ],
     },
     {
       text: "Blogs",
-      href: "/blogs",
+      href: urlLink("/blogs"),
       level2: [
-        { text: "Hello World", href: "/blogs/hello-world" },
+        { text: "Hello World", href: urlLink("/blogs/hello-world") },
       ],
     },
-    { text: "Contact", href: "/contact" },
+    { text: "Contact", href: urlLink("/contact") },
   ],
 };
 
 const FOOTER_NAV_NAME = "footer-navigation";
 const FOOTER_NAV_DATA = {
   level1: [
-    { text: "Home", href: "/" },
-    { text: "About", href: "/about" },
-    { text: "Blog", href: "/blogs" },
-    { text: "Contact", href: "/contact" },
+    { text: "Home", href: urlLink("/") },
+    { text: "About", href: urlLink("/about") },
+    { text: "Blog", href: urlLink("/blogs") },
+    { text: "Contact", href: urlLink("/contact") },
   ],
 };
 
@@ -768,6 +777,40 @@ async function ensureModelHasFields(modelName, requiredFields, models) {
   );
 }
 
+// Switches every `href` field in an existing model (at any list depth) to the
+// CMSLink type. ensureModelHasFields only adds missing fields, so a navigation
+// model created before the CMSLink conversion still has `url` href fields.
+// Idempotent: no-ops once every href is already CMSLink.
+async function ensureHrefFieldsUseCMSLink(modelName, models) {
+  const model = models.find((m) => m.name === modelName);
+  if (!model) {
+    console.log(`• Model "${modelName}" not found — skipping CMSLink check.`);
+    return;
+  }
+  let changed = false;
+  const convert = (fields) =>
+    fields.map((f) => {
+      const next = { ...f };
+      if (next.name === "href" && next.type !== "CMSLink") {
+        next.type = "CMSLink";
+        next.helperText = NAV_HREF_HELPER;
+        changed = true;
+      }
+      if (Array.isArray(next.subFields)) next.subFields = convert(next.subFields);
+      return next;
+    });
+  const newFields = convert(Array.isArray(model.fields) ? model.fields : []);
+  if (!changed) {
+    console.log(`• Model "${modelName}" href fields already use CMSLink — skipping.`);
+    return;
+  }
+  await client.request(UPDATE_MODEL, {
+    body: { id: model.id, data: { fields: newFields } },
+  });
+  model.fields = newFields;
+  console.log(`✓ Switched "${modelName}" href fields to CMSLink.`);
+}
+
 // Removes a field from an existing model if present. Used to drop the orphaned
 // top-level `description` field from the built-in `page` model — SEO description
 // now lives on the shared `metadata` model-field. Idempotent: no-ops when the
@@ -906,6 +949,45 @@ async function ensureContent(model, name, data, extra = {}) {
   const created = await res.json();
   console.log(`✓ Seeded "${model}" entry "${name}" (id: ${created.id}).`);
   return created.id;
+}
+
+// Rewrites plain-string hrefs in an existing navigation entry as CMSLink
+// values, so the CMSLink editor can open them. Entries seeded before the
+// CMSLink conversion stored hrefs as strings. Idempotent.
+async function migrateNavEntryLinks(name) {
+  const existing = await getEntry(NAV_MODEL_NAME, name);
+  if (!existing) return;
+  let changed = false;
+  const convert = (items) =>
+    (items || []).map((item) => {
+      const next = { ...item };
+      if (typeof next.href === "string") {
+        next.href = urlLink(next.href);
+        changed = true;
+      }
+      if (Array.isArray(next.level2)) next.level2 = convert(next.level2);
+      if (Array.isArray(next.level3)) next.level3 = convert(next.level3);
+      return next;
+    });
+  const data = existing.data || {};
+  const level1 = convert(data.level1);
+  if (!changed) {
+    console.log(`• Entry "${name}" links already use CMSLink — skipping.`);
+    return;
+  }
+  const res = await fetch(writeUpdateApi(NAV_MODEL_NAME, existing.id), {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${PRIVATE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ data: { ...data, level1 } }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Write API failed (${res.status}): ${text}`);
+  }
+  console.log(`✓ Converted "${name}" links to CMSLink values.`);
 }
 
 // Seeds the site-context entry wired to the navigation entries, or patches an
@@ -1109,6 +1191,11 @@ async function main() {
   // Dynamic preview URLs: the built-in `page` model always needs it set here;
   // the `article` model gets it from ARTICLE_MODEL_BODY when freshly created,
   // otherwise update the existing model.
+  // A navigation model created before the CMSLink conversion has `url` hrefs.
+  if (!createdNav) {
+    await ensureHrefFieldsUseCMSLink(NAV_MODEL_NAME, models);
+  }
+
   await ensurePreviewUrl(PAGE_MODEL_NAME, PAGE_PREVIEW_URL_LOGIC, models);
   if (!createdArticle) {
     await ensurePreviewUrl(ARTICLE_MODEL_NAME, ARTICLE_PREVIEW_URL_LOGIC, models);
@@ -1140,6 +1227,8 @@ async function main() {
     FOOTER_NAV_NAME,
     FOOTER_NAV_DATA
   );
+  await migrateNavEntryLinks(PRIMARY_NAV_NAME);
+  await migrateNavEntryLinks(FOOTER_NAV_NAME);
   await ensureSiteContext(headerNavId, footerNavId);
 
   // Seed the sample redirect entry. next.config.ts reads this model by name at
