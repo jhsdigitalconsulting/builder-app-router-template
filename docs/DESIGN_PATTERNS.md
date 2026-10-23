@@ -451,6 +451,22 @@ const eslintConfig = [
 - Centralize Builder constants in `lib/builder.ts` (`BUILDER_API_KEY`, `SITE_CONTEXT_NAME`).
 - `generateStaticParams` enumerates `page` URLs (excluding routes with their own implementations like `/blogs`) for static generation.
 
+### 10.1 Header & footer symbols
+
+The site header and footer are Builder.io **symbols** chosen per site, with an optional per-page override. `components/SiteHeader.tsx` and `components/SiteFooter.tsx` resolve them in this order:
+
+1. The page's `header` / `footer` reference (`PageData.header`, `PageData.footer`), if it is a symbol with a value.
+2. The Site context's `defaultHeader` / `defaultFooter` reference (`SiteContext.data`).
+3. The bare `<Header />` / `<Footer />` from `@repo/components`, with no props.
+
+The four fields are `ModelReference` values: `page.data.header`, `page.data.footer`, `site-context.data.defaultHeader` and `site-context.data.defaultFooter`. A reference that is missing, points at a deleted symbol, or has no `value` falls through to the next step, so a page always renders a header and footer. The resolved symbol is rendered through `RenderBuilderContent` with `data={{ siteContext }}`, so bindings such as `state.siteContext.*` resolve inside it.
+
+`components/PageShell.tsx` wraps every route (`[[...page]]`, `blogs/[handle]`, `not-found`). It renders the `flex flex-col min-h-screen` wrapper, `SiteHeader`, `<main id="main-content" role="main" className="flex-grow">{children}</main>`, then `SiteFooter`. Routes pass `siteContext` (to avoid a second fetch) and, for pages, the `headerOverride` / `footerOverride` references. `not-found` omits the overrides. Do not render `Header` or `Footer` directly in a route.
+
+The route `/section-editors/symbol/[name]` loads a symbol by name for the Builder editor (`_` gives an empty editor canvas). Publishing a symbol calls the revalidate webhook, which revalidates the whole site layout (`revalidatePath("/", "layout")`).
+
+Configure the revalidate webhook (with the `x-revalidate-secret` header) on the `symbol`, `site-context` and `navigation` models; publishing any of them revalidates the whole site layout.
+
 ---
 
 ## Quick reference — the rules that bite

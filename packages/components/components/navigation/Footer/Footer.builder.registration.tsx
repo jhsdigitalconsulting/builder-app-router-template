@@ -1,5 +1,5 @@
 import type { RegisteredComponent } from "@builder.io/sdk-react";
-import { withImage } from "../../../registry/shared";
+import { standardThemes, withImage } from "../../../registry/shared";
 import Footer from "./index";
 
 export const registration: RegisteredComponent[] = [
@@ -8,7 +8,29 @@ export const registration: RegisteredComponent[] = [
     name: "Footer",
     ...withImage(),
     inputs: [
-      { name: "navigation", type: "object", friendlyName: "Footer Navigation" },
+      {
+        name: "theme",
+        type: "string",
+        enum: standardThemes,
+        defaultValue: "dark",
+        friendlyName: "Theme",
+        helperText: "Visual theme for the footer background, text and links.",
+      },
+      {
+        name: "logo",
+        type: "file",
+        allowedFileTypes: ["jpeg", "jpg", "png", "svg", "webp", "gif"],
+        friendlyName: "Logo",
+        helperText: "Leave empty to use the logo from the Site context.",
+      },
+      {
+        name: "navigation",
+        type: "reference",
+        model: "navigation",
+        friendlyName: "Footer Navigation",
+        helperText:
+          "Pick the Navigation entry shown here. Leave empty to use the built-in default menu.",
+      },
       {
         name: "socialNetworks",
         type: "list",

@@ -70,6 +70,18 @@ export async function POST(request: Request) {
     // No/invalid JSON body — fall back to the `?path=` query param below.
   }
 
+  // The header/footer symbols, the Site context that picks them, and the
+  // navigation they render appear on every page, so publishing any of them
+  // revalidates the whole site layout rather than a single path.
+  if (
+    body.modelName === "symbol" ||
+    body.modelName === "site-context" ||
+    body.modelName === "navigation"
+  ) {
+    revalidatePath("/", "layout");
+    return NextResponse.json({ revalidated: true, path: "/ (layout)" });
+  }
+
   const path = resolvePath(body) ?? new URL(request.url).searchParams.get("path");
   if (!path) {
     return NextResponse.json({ message: "Missing path" }, { status: 400 });

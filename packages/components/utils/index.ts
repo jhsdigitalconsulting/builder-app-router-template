@@ -2,6 +2,7 @@ export * from './articleSchema';
 export * from './content';
 export * from './localeUtils';
 export * from './links';
+export * from './navigation';
 // NOTE: middlewareUtils is intentionally NOT re-exported here. It imports
 // `next/server` (edge-runtime only, references `__dirname`), so re-exporting it
 // from this barrel would pull server-only code into every browser consumer of

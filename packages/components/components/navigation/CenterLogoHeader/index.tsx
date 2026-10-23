@@ -3,14 +3,15 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState, useRef, useEffect } from "react";
-import { Navigation, Level1Item, Level2Item } from "@repo/types";
+import { ModelReference, Navigation, Level1Item, Level2Item } from "@repo/types";
+import { getNavItems } from "../../../utils/navigation";
 import { resolveLinkHref } from "../../../utils/links";
 import { useSiteContext } from "../../../contexts/SiteContextProvider";
 
 interface CenterLogoHeaderProps {
   logo?: string;
-  navigation1?: Navigation;
-  navigation2?: Navigation;
+  navigation1?: ModelReference;
+  navigation2?: ModelReference;
 }
 
 const defaultNavAttributes = {
@@ -53,8 +54,8 @@ const defaultSecondaryNav: Navigation = {
 };
 
 const CenterLogoHeader = ({
-  navigation1: primaryNav = defaultPrimaryNav,
-  navigation2: secondaryNav = defaultSecondaryNav,
+  navigation1,
+  navigation2,
   logo,
 }: CenterLogoHeaderProps) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -63,8 +64,8 @@ const CenterLogoHeader = ({
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Get navigation items for both sides with fallbacks
-  const leftNavItems = (primaryNav || defaultPrimaryNav).data.level1;
-  const rightNavItems = (secondaryNav || defaultSecondaryNav).data.level1;
+  const leftNavItems = getNavItems(navigation1, defaultPrimaryNav);
+  const rightNavItems = getNavItems(navigation2, defaultSecondaryNav);
 
   // Combine items for mobile menu
   const mobileNavItems = [...leftNavItems, ...rightNavItems];

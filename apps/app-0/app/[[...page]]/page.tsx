@@ -2,8 +2,8 @@ import React, { cache } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { fetchOneEntry, fetchEntries } from "@builder.io/sdk-react";
-import { Header, Footer, PageSchema, buildPageMetadata, FAQSchemaData } from "@repo/components";
-import type { Navigation, SiteContext } from "@repo/types";
+import { PageSchema, buildPageMetadata, FAQSchemaData } from "@repo/components";
+import type { SiteContext } from "@repo/types";
 import { BUILDER_API_KEY, getSiteContext } from "../../lib/builder";
 import {
   resolvePageParams,
@@ -11,6 +11,7 @@ import {
   isPreviewingFromSearchParams,
 } from "../../lib/page-utils";
 import RenderBuilderContent from "../../components/RenderBuilderContent";
+import PageShell from "../../components/PageShell";
 
 // ISR window (seconds) for published Builder.io content. Must be a literal —
 // App Router segment config is statically analyzed and rejects runtime/env
@@ -200,9 +201,12 @@ export default async function Page({ params, searchParams }: PageRouteProps) {
   const orgAddress = site?.data.organization?.address;
 
   return (
-    <div className="flex flex-col min-h-screen">
-      <Header navigation={site?.data?.headerNavigation1?.value as Navigation | undefined} />
-      <main id="main-content" className="flex-grow" role="main">
+    <PageShell
+      siteContext={site}
+      headerOverride={page?.data?.header}
+      footerOverride={page?.data?.footer}
+      locale={locale}
+    >
         {site && (
           <PageSchema
             title={page?.data?.title || ""}
@@ -254,8 +258,6 @@ export default async function Page({ params, searchParams }: PageRouteProps) {
           locale={locale}
           data={{ siteContext: site, lastUpdatedDate, pageContext: { breadcrumbs: breadcrumbTrail } }}
         />
-      </main>
-      <Footer navigation={page?.data?.footerNavigation?.value} />
-    </div>
+    </PageShell>
   );
 }

@@ -153,6 +153,14 @@ This project uses the Gen 2 React SDK (`@builder.io/sdk-react`), which is built 
 - The model and a sample rule are provisioned by `scripts/seed-builder.mjs` (`pnpm --filter app-0 init:builder`).
 - Changes take effect on the next deploy. For request-time redirects (very large rule sets or per-domain logic), move to a `proxy.ts`/middleware approach reading a generated JSON file.
 
+**Header & footer symbols:**
+- The header and footer are Builder.io symbols resolved by `apps/app-0/components/SiteHeader.tsx` / `SiteFooter.tsx`: the page's `data.header` / `data.footer` override first, then the Site context's `data.defaultHeader` / `data.defaultFooter`, then the bare `<Header />` / `<Footer />` from `@repo/components`.
+- Routes render through `components/PageShell.tsx` (wrapper, header, `<main id="main-content">`, footer) rather than using `Header`/`Footer` directly. Pass `siteContext` and the page's overrides.
+- A missing or deleted symbol falls back to the bare component, so a header and footer always render.
+- The route `/section-editors/symbol/[name]` loads a symbol by name in the editor (`_` gives an empty canvas); publishing a symbol revalidates the whole site layout.
+- Configure the revalidate webhook (with the `x-revalidate-secret` header) on the `symbol`, `site-context` and `navigation` models; publishing any of them revalidates the whole site layout.
+- See `docs/DESIGN_PATTERNS.md` section 10.1.
+
 **Component Registration Process** (full detail in `packages/components/COMPONENT_PATTERN.md`):
 1. Create the component folder `packages/components/components/{category}/{Name}/index.tsx`
    (component + `Props`, named + default export)
