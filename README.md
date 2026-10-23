@@ -19,6 +19,8 @@ Install dependencies (use **pnpm**):
 pnpm install
 ```
 
+The repo pins Node **22.23.4** (`.nvmrc`, `engines: "22.x"`). `.npmrc` sets `use-node-version`, so pnpm downloads that Node on first use and runs every script with it, even if your shell is on another version.
+
 ### Guided setup (recommended)
 
 Run the interactive setup from the repo root:
@@ -34,6 +36,15 @@ It will:
 1. Prompt for your Builder.io **public** and **private** API keys and write them into the app's `.env.local`.
 2. Optionally **rename** the placeholder `gacore` app (updates every reference across the monorepo and moves the directory — re-run `pnpm install` afterward).
 3. Provision the Builder space by running `init:builder` (see below).
+
+### Adding another site
+
+Once the repo is configured (the placeholder app has been renamed), re-running `pnpm configure` asks **"Create another site?"**:
+
+- **Yes** copies an existing site app to `apps/<name>` (without `node_modules`, build output or `.env.local`), gives it the next free dev port, writes its `.env.local`, adds `dev:<name>` / `build:<name>` root scripts, records its Vercel project in `.claude/project-config.md`, runs `pnpm install`, and optionally seeds its Builder space. Each site normally gets its **own Builder space**, because the `page` model (including the home page at `/`) is shared by everything in a space. You can skip the API keys, add them to `apps/<name>/.env.local` later, and then run `pnpm --filter <name> init:builder`.
+- **No** lets you pick an existing site and re-run the setup steps above for it.
+
+`init:builder` always seeds the app it runs in (the `--filter` target), using that app's `.env.local` and dev port.
 
 ### Provision Builder.io models
 
@@ -82,7 +93,7 @@ This runs at **build time** — redirect changes in Builder take effect on the n
 
 | Command | Description |
 | --- | --- |
-| `pnpm configure` | Guided first-run setup: API keys, optional app rename, Builder provisioning |
+| `pnpm configure` | Guided first-run setup: API keys, optional app rename, Builder provisioning. On a configured repo, it offers to add another site |
 | `pnpm dev` | Start the development server (port 3000) |
 | `pnpm --filter gacore init:builder` | Provision the `site-context`, `article`, and `url-redirect` models in a fresh Builder space |
 | `pnpm build` | Build all apps except Storybook |

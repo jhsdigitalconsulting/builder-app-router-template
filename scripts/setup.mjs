@@ -22,140 +22,52 @@
  * This runs from the repo root (not from inside the app), so it can safely
  * rename the app directory as the final step. After a rename you must re-run
  * `pnpm install` to regenerate the lockfile for the new path.
+ *
+ * Once the repo is configured (the `app-0` placeholder has been renamed),
+ * re-running `pnpm configure` first asks whether to create another site. Yes
+ * runs the add-site flow (scripts/lib/add-site.mjs): it copies an existing site
+ * app to apps/<name> with its own port, .env.local, root dev/build scripts and
+ * (optionally) a seeded Builder space. No picks an existing site and re-runs
+ * the steps above for it.
  */
 
-import readline from "node:readline";
 import { spawnSync } from "node:child_process";
-import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  readdirSync,
-  renameSync,
-} from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve, join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
+import { join } from "node:path";
+import { ROOT, APPS_DIR, findSiteApps, isConfigured } from "./lib/apps.mjs";
+import { askWithDefault, askYesNo, askChoice, closePrompt } from "./lib/prompt.mjs";
+import { upsertEnv, readEnvValue, replaceInFile, isValidAppName } from "./lib/files.mjs";
+import { addSite } from "./lib/add-site.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(__dirname, "..");
-const APPS_DIR = join(ROOT, "apps");
+const PROJECT_CONFIG_PATH = join(ROOT, ".claude", "project-config.md");
 
-// A SINGLE long-lived readline interface for the whole script. Creating a new
-// interface per prompt breaks under piped/non-interactive stdin: once the first
-// reader hits EOF, later interfaces emit neither `line` nor `close`, their
-// promise hangs, and node exits silently when the event loop drains. With one
-// shared reader we queue every line and hand them out one prompt at a time, and
-// resolve "" after EOF so the script can never hang.
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-
-const lineQueue = [];
-let pendingResolver = null;
-let stdinEnded = false;
-
-// When `muted`, suppress echoed keystrokes (for the private key) while still
-// letting the prompt itself and the trailing newline through, so the terminal
-// doesn't garble. Echo is only emitted on a real TTY (terminal mode); under a
-// pipe there's nothing to mute.
-let muted = false;
-const originalWriteToOutput = rl._writeToOutput.bind(rl);
-rl._writeToOutput = (str) => {
-  if (muted && str !== "\n" && str !== "\r\n") return;
-  originalWriteToOutput(str);
-};
-
-rl.on("line", (line) => {
-  if (pendingResolver) {
-    const resolve = pendingResolver;
-    pendingResolver = null;
-    resolve(line);
-  } else {
-    lineQueue.push(line);
-  }
-});
-rl.on("close", () => {
-  stdinEnded = true;
-  if (pendingResolver) {
-    const resolve = pendingResolver;
-    pendingResolver = null;
-    resolve("");
-  }
-});
-
-function nextLine() {
-  if (lineQueue.length) return Promise.resolve(lineQueue.shift());
-  if (stdinEnded) return Promise.resolve("");
-  return new Promise((resolve) => {
-    pendingResolver = resolve;
-  });
+function readProjectConfig() {
+  return existsSync(PROJECT_CONFIG_PATH) ? readFileSync(PROJECT_CONFIG_PATH, "utf8") : "";
 }
 
-async function ask(query, { mask = false } = {}) {
-  process.stdout.write(query);
-  muted = mask;
-  const line = await nextLine();
-  if (muted) {
-    muted = false;
-    process.stdout.write("\n"); // we suppressed the user's Enter echo
-  }
-  return line.trim();
+// Extra sites added by `pnpm configure` record their Vercel project as
+// "- Project name (<app>): ..." lines alongside the primary "- Project name:".
+function readSiteVercelLines() {
+  return readProjectConfig().match(/^- Project name \(.+\):.*$/gm) || [];
 }
 
-async function askWithDefault(label, current, { mask = false } = {}) {
-  const shown = current ? (mask ? "•".repeat(8) : current) : "";
-  const suffix = current ? ` (enter to keep ${shown})` : "";
-  const answer = await ask(`${label}${suffix}: `, { mask });
-  return answer || current || "";
-}
-
-async function askYesNo(query, defaultNo = true) {
-  const answer = (await ask(`${query} ${defaultNo ? "(y/N)" : "(Y/n)"}: `))
-    .toLowerCase();
-  if (!answer) return !defaultNo;
-  return answer === "y" || answer === "yes";
-}
-
-// --- Locate the main Next.js app (the non-storybook workspace) ---
-function findMainApp() {
-  for (const entry of readdirSync(APPS_DIR)) {
-    const pkgPath = join(APPS_DIR, entry, "package.json");
-    if (!existsSync(pkgPath)) continue;
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (pkg.name !== "storybook-app" && deps["@builder.io/sdk-react"]) {
-      return { dir: entry, name: pkg.name, path: join(APPS_DIR, entry) };
-    }
-  }
-  throw new Error("Could not find the main Next.js app under apps/.");
-}
-
-// --- .env.local writing: preserve existing lines, upsert the two keys ---
-function upsertEnv(content, key, value) {
-  const line = `${key}=${value}`;
-  const re = new RegExp(`^${key}=.*$`, "m");
-  if (re.test(content)) return content.replace(re, line);
-  return `${content.replace(/\n*$/, "")}\n${line}\n`;
-}
-
-function readEnvValue(content, key) {
-  const match = content.match(new RegExp(`^${key}=(.*)$`, "m"));
-  return match ? match[1].trim() : "";
-}
-
-// --- Replace every occurrence of the app name token across a file ---
-function replaceInFile(filePath, from, to) {
-  if (!existsSync(filePath)) return;
-  const original = readFileSync(filePath, "utf8");
-  const updated = original.split(from).join(to);
-  if (updated !== original) writeFileSync(filePath, updated);
-}
-
-function isValidAppName(name) {
-  return /^[a-z][a-z0-9-]*$/.test(name);
+// The project-config label holding this app's Vercel project name.
+function vercelLabelFor(app) {
+  const siteLabel = `Project name (${app.dir})`;
+  return readConfigValue(siteLabel) !== null ? siteLabel : "Project name";
 }
 
 // --- Write .claude/project-config.md from collected integration values ---
-function writeProjectConfig({ jira, vercelProject }) {
-  const path = join(ROOT, ".claude", "project-config.md");
+function writeProjectConfig({ jira, vercelLabel, vercelProject }) {
+  let primaryProject = readConfigValue("Project name") || "";
+  let siteLines = readSiteVercelLines();
+  if (vercelLabel === "Project name") {
+    primaryProject = vercelProject || "";
+  } else {
+    siteLines = siteLines.map((line) =>
+      line.startsWith(`- ${vercelLabel}:`) ? `- ${vercelLabel}: ${vercelProject}` : line
+    );
+  }
   const content = `# Project Config (read by .claude/commands/*)
 
 This file holds the per-project values the Claude Code commands need. It is
@@ -168,26 +80,21 @@ populated by \`pnpm configure\`. You can also edit it by hand.
 - Base URL: ${jira ? jira.baseUrl : ""}
 
 ## Vercel
-- Project name: ${vercelProject || ""}
+${["- Project name: " + primaryProject, ...siteLines].join("\n")}
 `;
-  writeFileSync(path, content);
-  return path;
+  writeFileSync(PROJECT_CONFIG_PATH, content);
+  return PROJECT_CONFIG_PATH;
 }
 
-// --- Read an existing project-config.md value for prompt defaults ---
+// --- Read an existing project-config.md value (null when the line is absent) ---
 function readConfigValue(label) {
-  const path = join(ROOT, ".claude", "project-config.md");
-  if (!existsSync(path)) return "";
-  const content = readFileSync(path, "utf8");
-  const match = content.match(new RegExp(`^- ${label}:\\s*(.*)$`, "m"));
-  return match ? match[1].trim() : "";
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = readProjectConfig().match(new RegExp(`^- ${escaped}:[ \\t]*(.*)$`, "m"));
+  return match ? match[1].trim() : null;
 }
 
-async function main() {
-  console.log("\nBuilder.io App Router template — setup\n");
-
-  const app = findMainApp();
-  console.log(`Main app: apps/${app.dir} (package "${app.name}")\n`);
+async function configureSite(app) {
+  console.log(`Site app: apps/${app.dir} (package "${app.name}")\n`);
 
   // --- 1. Credentials ---
   const envPath = join(app.path, ".env.local");
@@ -223,7 +130,7 @@ async function main() {
   {
     while (true) {
       const candidate = (await askWithDefault(
-        "App name (press Enter to keep, or enter a new name to rename — lowercase, letters/numbers/dashes)",
+        "App name — type a new name to rename it (lowercase letters, numbers, dashes)",
         app.dir
       )).toLowerCase();
       if (!candidate || candidate === app.dir) {
@@ -274,8 +181,8 @@ async function main() {
   let jira = null;
   if (await askYesNo("\nConfigure Jira integration for the Claude Code commands?")) {
     // Reconstruct a sample URL from existing config so re-running setup pre-fills nicely.
-    const existingKey = readConfigValue("Project key");
-    const existingBase = readConfigValue("Base URL");
+    const existingKey = readConfigValue("Project key") || "";
+    const existingBase = readConfigValue("Base URL") || "";
     const candidate = (existingKey && existingBase) ? `${existingBase}${existingKey}-1` : "";
     const defaultJiraUrl = /^https?:\/\//.test(candidate) ? candidate : "";
 
@@ -302,11 +209,12 @@ async function main() {
       parsed = true;
     }
   }
+  const vercelLabel = vercelLabelFor(app);
   const vercelProject = await askWithDefault(
     "Vercel project name (for preview-deployment detection)",
-    readConfigValue("Project name") || appName
+    readConfigValue(vercelLabel) || appName
   );
-  const cfgPath = writeProjectConfig({ jira, vercelProject });
+  const cfgPath = writeProjectConfig({ jira, vercelLabel, vercelProject });
   console.log(`✓ Wrote ${cfgPath.replace(ROOT + "/", "")}`);
 
   // --- 2. Rename derived from app name (already validated above) ---
@@ -344,8 +252,29 @@ async function main() {
     );
   }
 
+}
+
+async function main() {
+  console.log("\nBuilder.io App Router template — setup\n");
+
+  const apps = findSiteApps();
+  if (!isConfigured()) {
+    await configureSite(apps[0]);
+  } else {
+    console.log(`This repository is already configured (sites: ${apps.map((a) => a.dir).join(", ")}).`);
+    if (await askYesNo("Create another site?")) {
+      await addSite(apps);
+    } else {
+      const app = apps.length === 1
+        ? apps[0]
+        : apps[await askChoice("Reconfigure which site?", apps.map((a) => a.dir))];
+      console.log();
+      await configureSite(app);
+    }
+  }
+
   console.log("\n✓ Setup complete.\n");
-  rl.close();
+  closePrompt();
 }
 
 main().catch((err) => {
