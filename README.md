@@ -34,7 +34,7 @@ pnpm configure
 It will:
 
 1. Prompt for your Builder.io **public** and **private** API keys and write them into the app's `.env.local`.
-2. Optionally **rename** the placeholder `gacore` app (updates every reference across the monorepo and moves the directory — re-run `pnpm install` afterward).
+2. Optionally **rename** the placeholder `app-0` app (updates every reference across the monorepo and moves the directory — re-run `pnpm install` afterward).
 3. Provision the Builder space by running `init:builder` (see below).
 
 ### Adding another site
@@ -66,11 +66,11 @@ The app reads models that don't exist in a brand-new Builder space:
 Without them the app throws `"Error fetching data."` at runtime and `pnpm build` fails with `"Model not found"`. A one-time seed script creates the models and populates a default `site-context` entry, a sample article, plus a sample redirect:
 
 ```bash
-# Requires BUILDER_PRIVATE_KEY in apps/gacore/.env.local (bpk-...)
-pnpm --filter gacore init:builder
+# Requires BUILDER_PRIVATE_KEY in apps/app-0/.env.local (bpk-...)
+pnpm --filter app-0 init:builder
 ```
 
-The script ([`apps/gacore/scripts/seed-builder.mjs`](./apps/gacore/scripts/seed-builder.mjs)) is **idempotent** — re-running it skips anything that already exists, so it's safe to run on every fresh clone. Edit the seeded defaults afterward in the Builder.io editor.
+The script ([`apps/app-0/scripts/seed-builder.mjs`](./apps/app-0/scripts/seed-builder.mjs)) is **idempotent** — re-running it skips anything that already exists, so it's safe to run on every fresh clone. Edit the seeded defaults afterward in the Builder.io editor.
 
 > The model schemas are created through the Builder **Admin GraphQL API** (`addModel`); the default content is written through the **Write REST API** (the Admin GraphQL API has no content-write mutation).
 
@@ -80,7 +80,7 @@ The script ([`apps/gacore/scripts/seed-builder.mjs`](./apps/gacore/scripts/seed-
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view the app. Builder.io content is fetched and rendered through the App Router catch-all route in `apps/gacore/app/[[...page]]/`.
+Open [http://localhost:3000](http://localhost:3000) to view the app. Builder.io content is fetched and rendered through the App Router catch-all route in `apps/app-0/app/[[...page]]/`.
 
 ## URL redirects
 
@@ -92,7 +92,7 @@ Redirect rules are managed in the Builder.io **`url-redirect`** model — no cod
 | `urlTo` | Destination path or URL, e.g. `/new-page`. |
 | `permanentRedirect` | On → **308** (permanent). Off → **307** (temporary). Defaults to permanent. |
 
-[`apps/gacore/lib/redirects.ts`](./apps/gacore/lib/redirects.ts) reads every entry and feeds the rules into Next.js's [`redirects()`](https://nextjs.org/docs/app/api-reference/config/next-config-js/redirects) in [`next.config.ts`](./apps/gacore/next.config.ts).
+[`apps/app-0/lib/redirects.ts`](./apps/app-0/lib/redirects.ts) reads every entry and feeds the rules into Next.js's [`redirects()`](https://nextjs.org/docs/app/api-reference/config/next-config-js/redirects) in [`next.config.ts`](./apps/app-0/next.config.ts).
 
 This runs at **build time** — redirect changes in Builder take effect on the next deploy. That keeps redirects fast (handled by Next/the CDN with no per-request fetch) and is the right trade-off for most sites. The fetch fails open: a missing model or network error logs a warning and ships zero redirects rather than breaking the build. If a project outgrows Next's ~1,024-redirect limit or needs per-domain rules, graduate to a `proxy.ts`/middleware approach that reads a generated JSON file at request time.
 
@@ -102,7 +102,7 @@ This runs at **build time** — redirect changes in Builder take effect on the n
 | --- | --- |
 | `pnpm configure` | Guided first-run setup: API keys, optional app rename, Builder provisioning. On a configured repo, it offers to add another site |
 | `pnpm dev` | Start the development server (port 3000) |
-| `pnpm --filter gacore init:builder` | Provision the `site-context`, `article`, and `url-redirect` models in a fresh Builder space |
+| `pnpm --filter app-0 init:builder` | Provision the `site-context`, `article`, and `url-redirect` models in a fresh Builder space |
 | `pnpm build` | Build all apps except Storybook |
 | `pnpm build-all` | Build everything, including Storybook |
 | `pnpm lint` | Lint the workspace |
@@ -113,7 +113,7 @@ This runs at **build time** — redirect changes in Builder take effect on the n
 
 ```
 apps/
-  gacore/        Next.js 16 App Router application
+  app-0/        Next.js 16 App Router application
   storybook/    Storybook component workspace
 packages/
   components/   Shared component library (@repo/components)
