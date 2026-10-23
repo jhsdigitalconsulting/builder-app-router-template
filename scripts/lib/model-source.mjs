@@ -5,17 +5,8 @@
  * add-site flow asks "fresh or copy" up front instead.
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import { askChoice } from "./prompt.mjs";
-import { readEnvValue } from "./files.mjs";
-
-export function readPrivateKey(app) {
-  const envPath = join(app.path, ".env.local");
-  return existsSync(envPath)
-    ? readEnvValue(readFileSync(envPath, "utf8"), "BUILDER_PRIVATE_KEY")
-    : "";
-}
+import { readPrivateKey } from "./files.mjs";
 
 // Returns the init:builder args for the chosen model source: [] for the
 // baseline models, or ["--models-from=<dir>"] to copy another site's models.

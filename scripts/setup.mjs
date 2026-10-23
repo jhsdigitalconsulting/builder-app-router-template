@@ -38,7 +38,7 @@ import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT, APPS_DIR, findSiteApps, isConfigured } from "./lib/apps.mjs";
 import { askWithDefault, askYesNo, askChoice, cancel, closePrompt } from "./lib/prompt.mjs";
-import { upsertEnv, readEnvValue, replaceInFile, isValidAppName } from "./lib/files.mjs";
+import { upsertEnv, readEnvValue, replaceAppNameInFile, isValidAppName } from "./lib/files.mjs";
 import { addSite } from "./lib/add-site.mjs";
 import { askModelSourceArgs } from "./lib/model-source.mjs";
 
@@ -173,8 +173,21 @@ async function configureSite(app) {
 
   // --- 1d. Claude Code command integrations (Jira + Vercel) ---
   console.log("\nClaude Code command config (.claude/project-config.md):");
-  let jira = null;
-  if (await askYesNo("Configure Jira integration for the Claude Code commands?")) {
+  // project-config.md is shared by every site, so an existing Jira config is
+  // kept unless the user chooses to change it.
+  const existingJira = readConfigValue("Configured") === "yes"
+    ? {
+        projectKey: readConfigValue("Project key") || "",
+        cloudId: readConfigValue("Cloud ID") || "",
+        baseUrl: readConfigValue("Base URL") || "",
+      }
+    : null;
+  let jira = existingJira;
+  const jiraQuestion = existingJira
+    ? `Jira is configured for ${existingJira.projectKey}. Change it?`
+    : "Configure Jira integration for the Claude Code commands?";
+  if (await askYesNo(jiraQuestion)) {
+    jira = null;
     // Reconstruct a sample URL from existing config so re-running setup pre-fills nicely.
     const existingKey = readConfigValue("Project key") || "";
     const existingBase = readConfigValue("Base URL") || "";
@@ -220,6 +233,10 @@ async function configureSite(app) {
   console.log(`  Site            apps/${app.dir}${newName ? ` → renamed to apps/${newName}` : ""}`);
   console.log(`  Builder keys    saved to apps/${app.dir}/.env.local`);
   console.log(`  Models          ${modelArgs.length ? `copied from ${modelArgs[0].split("=")[1]}'s space` : "template baseline"}`);
+  if (modelArgs.length) {
+    console.log("  ⚠ Copying replaces every model in this space that has the same name as one in the");
+    console.log("    source space (its own webhooks are kept), and the seed rewrites the home page at /.");
+  }
   console.log(`  Site URL        ${builderSiteUrl}`);
   console.log(`  Description     ${builderSpaceDescription}`);
   console.log(`  Jira            ${jira ? jira.projectKey : "not configured"}`);
@@ -255,7 +272,7 @@ async function configureSite(app) {
       join(app.path, "package.json"),
       join(ROOT, ".claude", "project-config.md"),
     ];
-    for (const file of filesToUpdate) replaceInFile(file, app.dir, newName);
+    for (const file of filesToUpdate) replaceAppNameInFile(file, app.dir, newName);
     renameSync(app.path, join(APPS_DIR, newName));
     console.log(`✓ Renamed app to "${newName}".`);
     console.log(

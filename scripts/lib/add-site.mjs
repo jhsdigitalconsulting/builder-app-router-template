@@ -18,8 +18,7 @@ import { readFileSync, writeFileSync, existsSync, cpSync } from "node:fs";
 import { basename, join } from "node:path";
 import { ROOT, APPS_DIR, nextFreePort } from "./apps.mjs";
 import { ask, askWithDefault, askYesNo, askChoice, cancel } from "./prompt.mjs";
-import { upsertEnv, replaceInFile, isValidAppName } from "./files.mjs";
-import { readPrivateKey } from "./model-source.mjs";
+import { upsertEnv, readEnvValue, readPrivateKey, replaceInFile, isValidAppName } from "./files.mjs";
 
 // Never copied into the new app: build output, installed deps and secrets.
 const SKIPPED_ENTRIES = new Set([
@@ -29,6 +28,7 @@ const SKIPPED_ENTRIES = new Set([
   ".vercel",
   "next-env.d.ts",
   "tsconfig.tsbuildinfo",
+  "dev-server.log",
 ]);
 
 function shouldCopy(src) {
@@ -86,10 +86,9 @@ async function askBuilderKeys(source, offerReuse) {
   if (offerReuse && await askYesNo(`Reuse the Builder space from ${source.dir}?`)) {
     const sourceEnvPath = join(source.path, ".env.local");
     const sourceEnv = existsSync(sourceEnvPath) ? readFileSync(sourceEnvPath, "utf8") : "";
-    const read = (key) => (sourceEnv.match(new RegExp(`^${key}=(.*)$`, "m"))?.[1] || "").trim();
     return {
-      publicKey: read("NEXT_PUBLIC_BUILDER_API_KEY"),
-      privateKey: read("BUILDER_PRIVATE_KEY"),
+      publicKey: readEnvValue(sourceEnv, "NEXT_PUBLIC_BUILDER_API_KEY"),
+      privateKey: readEnvValue(sourceEnv, "BUILDER_PRIVATE_KEY"),
       reused: true,
     };
   }
@@ -192,7 +191,10 @@ export async function addSite(apps) {
   const hasKeys = Boolean(publicKey && privateKey);
   const seedArgs = ["--filter", name, "init:builder"];
   if (cloning) seedArgs.push(`--models-from=${source.dir}`);
-  const seedNow = hasKeys && await askYesNo(`Seed the Builder space for ${name} after creating it?`, false);
+  // Seeding a reused space would overwrite the source site's live home page
+  // and Site URL, so it is only offered for a space of the site's own.
+  const seedNow = hasKeys && !reused
+    && await askYesNo(`Seed the Builder space for ${name} after creating it?`, false);
 
   // --- 2. Confirm ---
   const spaceLabel = reused
@@ -217,6 +219,12 @@ export async function addSite(apps) {
   cpSync(source.path, appPath, { recursive: true, filter: shouldCopy });
   writeAppPackageJson(appPath, name, port);
   replaceInFile(join(appPath, ".env.example"), source.dir, name);
+  // The sitemap's local fallback URL is the source site's dev port.
+  replaceInFile(
+    join(appPath, "app", "sitemap.ts"),
+    `http://localhost:${source.port}`,
+    `http://localhost:${port}`
+  );
   console.log(`\n✓ Copied apps/${source.dir} → apps/${name} (port ${port})`);
 
   let envContent = readFileSync(join(ROOT, "env.example"), "utf8");
@@ -251,6 +259,8 @@ export async function addSite(apps) {
       console.error(`\n✗ Seeding failed. Fix the error above and run \`${seedCommand}\`.`);
       process.exit(1);
     }
+  } else if (reused) {
+    console.log(`\nThe Builder space is shared with ${source.dir}, so it was not seeded.`);
   } else if (!hasKeys) {
     console.log(`\n⚠ No Builder keys yet. Add them to apps/${name}/.env.local, then run:`);
     console.log(`  ${seedCommand}`);

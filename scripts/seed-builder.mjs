@@ -57,12 +57,12 @@
  */
 
 import { GraphQLClient, gql } from "graphql-request";
-import { readFileSync, existsSync, openSync } from "node:fs";
+import { readFileSync, openSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
 import { ROOT, findCurrentApp, findSiteApps } from "./lib/apps.mjs";
-import { readEnvValue } from "./lib/files.mjs";
+import { readPrivateKey } from "./lib/files.mjs";
 import { copyModels } from "./lib/copy-models.mjs";
 
 // The app being seeded — the one `pnpm --filter <app> init:builder` runs in.
@@ -922,12 +922,12 @@ function printPluginReminder(pluginUrl) {
 // URLs Builder can't reach (e.g. localhost) — those must be set in the UI.
 async function ensureSiteUrl(siteUrl) {
   if (!siteUrl) return;
-  const { settings } = await client.request(SPACE_SETTINGS);
-  if (settings?.siteUrl === siteUrl) {
-    console.log(`✓ Space Site URL already set to ${siteUrl}`);
-    return;
-  }
   try {
+    const { settings } = await client.request(SPACE_SETTINGS);
+    if (settings?.siteUrl === siteUrl) {
+      console.log(`✓ Space Site URL already set to ${siteUrl}`);
+      return;
+    }
     await client.request(UPDATE_SPACE_PROPERTIES, { properties: { siteUrl } });
     console.log(`✓ Set space Site URL → ${siteUrl}`);
   } catch (err) {
@@ -1174,6 +1174,7 @@ async function ensureDevServerRunning() {
     detached: true,
   });
   dev.unref();
+  closeSync(log); // the child holds its own copy of the descriptor
   console.log(`✓ Dev server starting at ${url}`);
   console.log(`  Logs: apps/${APP.dir}/dev-server.log (stop it with: kill $(lsof -ti:${APP.port}))\n`);
 }
@@ -1258,10 +1259,7 @@ async function provisionBaselineModels() {
 async function provisionModelsFrom(appRef) {
   const source = findSiteApps().find((app) => app.dir === appRef || app.name === appRef);
   if (!source) throw new Error(`--models-from: no site app named "${appRef}".`);
-  const envPath = join(source.path, ".env.local");
-  const sourceKey = existsSync(envPath)
-    ? readEnvValue(readFileSync(envPath, "utf8"), "BUILDER_PRIVATE_KEY")
-    : "";
+  const sourceKey = readPrivateKey(source);
   if (!sourceKey) {
     throw new Error(`--models-from: apps/${source.dir}/.env.local has no BUILDER_PRIVATE_KEY.`);
   }

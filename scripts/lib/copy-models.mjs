@@ -11,8 +11,10 @@
  * Models are matched by name. A model missing from the target is created; one
  * that already exists (e.g. the built-in `page` model) is overwritten with the
  * source definition. `model`-type fields point at another model by id, and ids
- * differ per space, so those are rewritten to the target space's ids. Content
- * entries are not copied.
+ * differ per space, so those are rewritten to the target space's ids. Webhooks
+ * are never copied: a new model gets none, and an existing one keeps its own
+ * (e.g. the site's publish → /api/revalidate hook). Content entries are not
+ * copied.
  */
 
 import { GraphQLClient, gql } from "graphql-request";
@@ -81,11 +83,12 @@ function remapModelIds(value, idMap) {
   return value;
 }
 
-function portableBody(model) {
+// Copied webhooks would notify the source site when this site's content
+// changes, so the target model's own webhooks (or none) are used instead.
+function portableBody(model, targetWebhooks = []) {
   const body = { ...model.everything };
   for (const key of SERVER_KEYS) delete body[key];
-  // Copied webhooks would notify the source site when this site's content changes.
-  body.webhooks = [];
+  body.webhooks = targetWebhooks;
   return body;
 }
 
@@ -127,7 +130,8 @@ export async function copyModels(sourcePrivateKey, targetPrivateKey) {
 
   // Pass 2: copy each model's settings and full fields array.
   for (const model of sourceModels) {
-    const data = remapModelIds(portableBody(model), idMap);
+    const targetWebhooks = targetByName.get(model.name)?.everything?.webhooks || [];
+    const data = remapModelIds(portableBody(model, targetWebhooks), idMap);
     for (const key of IMMUTABLE_KEYS) delete data[key];
     await target.request(UPDATE_MODEL, { body: { id: idMap.get(model.id), data } });
     console.log(`✓ Copied the definition of "${model.name}".`);
