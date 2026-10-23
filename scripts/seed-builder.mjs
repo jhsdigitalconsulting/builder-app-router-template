@@ -40,41 +40,42 @@
  *      the Admin GraphQL API has no content-write mutation, so content creation
  *      must go through the Write API. Model = GraphQL, content = REST.
  *
- * Credentials are read from the main app's .env.local (auto-detected under apps/):
+ * Credentials are read from the .env.local of the app it runs in (the
+ * `--filter` target; falls back to the first site app under apps/):
  *   - BUILDER_PRIVATE_KEY          (bpk-...)  — required, for writes
  *   - NEXT_PUBLIC_BUILDER_API_KEY             — required, to check existing content
  *   - NEXT_PUBLIC_SITE_CONTEXT_NAME           — entry name the app queries by
+ *
+ * Cloning another site's models instead of steps 1–6:
+ *
+ *   pnpm --filter <app> init:builder --models-from=<other-app>
+ *
+ * copies every model definition from <other-app>'s Builder space as it is now
+ * (including changes made in the Builder UI), using the private key in that
+ * app's .env.local. Step 7 still seeds the sample content, skipping any model
+ * the copied schema doesn't have. See scripts/lib/copy-models.mjs.
  */
 
 import { GraphQLClient, gql } from "graphql-request";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve, join } from "node:path";
+import { readFileSync, openSync, closeSync } from "node:fs";
+import { join } from "node:path";
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
+import { ROOT, findCurrentApp, findSiteApps } from "./lib/apps.mjs";
+import { readPrivateKey } from "./lib/files.mjs";
+import { copyModels } from "./lib/copy-models.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(__dirname, "..");
-const APPS_DIR = join(ROOT, "apps");
+// The app being seeded — the one `pnpm --filter <app> init:builder` runs in.
+const APP = findCurrentApp();
 
-function findMainApp() {
-  for (const entry of readdirSync(APPS_DIR)) {
-    const pkgPath = join(APPS_DIR, entry, "package.json");
-    if (!existsSync(pkgPath)) continue;
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (pkg.name !== "storybook-app" && deps["@builder.io/sdk-react"]) {
-      return { dir: entry, name: pkg.name, path: join(APPS_DIR, entry) };
-    }
-  }
-  throw new Error("Could not find the main Next.js app under apps/.");
-}
+// `--models-from=<app>` clones that site's models instead of the baseline ones.
+const MODELS_FROM =
+  process.argv.find((arg) => arg.startsWith("--models-from="))?.split("=")[1] || "";
 
 // --- Load .env.local (standalone node scripts don't get Next's env loading) ---
 function loadEnvLocal() {
   try {
-    const app = findMainApp();
-    const raw = readFileSync(join(app.path, ".env.local"), "utf8");
+    const raw = readFileSync(join(APP.path, ".env.local"), "utf8");
     for (const line of raw.split("\n")) {
       const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
       if (match && !process.env[match[1]]) {
@@ -94,6 +95,8 @@ const SITE_CONTEXT_NAME =
   process.env.NEXT_PUBLIC_SITE_CONTEXT_NAME || "builder-app-template";
 const BUILDER_SITE_URL = process.env.BUILDER_SITE_URL || "";
 const BUILDER_SPACE_DESCRIPTION = process.env.BUILDER_SPACE_DESCRIPTION || "";
+// Placeholder image text naming the site, e.g. "acme-blog" → ?text=acme-blog.
+const SITE_NAME_IMAGE_TEXT = encodeURIComponent(SITE_CONTEXT_NAME).replace(/%20/g, "+");
 
 const MODEL_NAME = "site-context";
 const ARTICLE_MODEL_NAME = "article";
@@ -228,10 +231,10 @@ const MODEL_BODY = {
 
 // --- Default content seeded into the new model ---
 const DEFAULT_DATA = {
-  siteName: "Builder App Template",
-  logo: "https://placehold.co/400x100.png?text=Logo",
+  siteName: SITE_CONTEXT_NAME,
+  logo: `https://placehold.co/400x100.png?text=${SITE_NAME_IMAGE_TEXT}`,
   organization: {
-    name: "Builder App Template",
+    name: SITE_CONTEXT_NAME,
     description:
       "A starter template for building sites with Builder.io and the Next.js App Router.",
     address: {
@@ -515,9 +518,11 @@ const HOME_PAGE_BLOCKS = [
                       inheritTheme: true,
                       alignment: "left",
                       maskOpacity: 0,
-                      eyebrow: "Builder.io + Next.js App Router",
-                      headline: "Your Starting Point for Visual Content",
+                      // The site name shows which site this page was seeded for.
+                      eyebrow: `${SITE_CONTEXT_NAME} · Builder.io + Next.js App Router`,
+                      headline: `Welcome to ${SITE_CONTEXT_NAME}`,
                       content:
+                        `<p>This home page was generated for the <strong>${SITE_CONTEXT_NAME}</strong> site by <code>pnpm configure</code>.</p>` +
                         "<p>This template comes pre-wired with visual editing, a blog system, navigation management, SEO tooling, URL redirects, and a themeable component library — all out of the box. Open the Builder.io editor to start customizing, or explore the code to understand how everything fits together.</p>",
                     },
                   },
@@ -530,8 +535,8 @@ const HOME_PAGE_BLOCKS = [
                   component: {
                     name: "Image",
                     options: {
-                      image: "https://placehold.co/600x400.png?text=Template+Preview",
-                      altText: "Builder.io template site preview",
+                      image: `https://placehold.co/600x400.png?text=${SITE_NAME_IMAGE_TEXT}`,
+                      altText: `${SITE_CONTEXT_NAME} site preview`,
                     },
                   },
                   responsiveStyles: {
@@ -706,6 +711,19 @@ const UPDATE_MODEL = gql`
       id
       name
     }
+  }
+`;
+
+// `settings` is a JSON scalar holding the space document (name, siteUrl, ...).
+const SPACE_SETTINGS = gql`
+  query {
+    settings
+  }
+`;
+
+const UPDATE_SPACE_PROPERTIES = gql`
+  mutation updateSpaceProperties($properties: SpacePropertiesInput!) {
+    updateSpaceProperties(properties: $properties)
   }
 `;
 
@@ -898,15 +916,41 @@ function printPluginReminder(pluginUrl) {
   console.log("  Without the plugin, CMSLink inputs appear as plain text in the editor.");
 }
 
-// The Builder.io Admin GraphQL API does not expose an updateSpace mutation,
-// and the REST space endpoint requires user-session auth rather than a private
-// key. Space-level settings must therefore be applied manually via the UI.
-function printSpaceSettingsReminder(siteUrl, description) {
-  if (!siteUrl && !description) return;
+// Sets the space's Site URL (Settings → Space), which the editor uses as the
+// preview base URL (`space.siteUrl` in the model preview URL logic). The Admin
+// API's updateSpaceProperties mutation only accepts siteUrl, and it rejects
+// URLs Builder can't reach (e.g. localhost) — those must be set in the UI.
+async function ensureSiteUrl(siteUrl) {
+  if (!siteUrl) return;
+  try {
+    const { settings } = await client.request(SPACE_SETTINGS);
+    if (settings?.siteUrl === siteUrl) {
+      console.log(`✓ Space Site URL already set to ${siteUrl}`);
+      return;
+    }
+  } catch (err) {
+    // Not being able to read the current value shouldn't stop the update.
+    const reason = err.response?.errors?.[0]?.message || err.message;
+    console.log(`• Couldn't read the current Site URL (${reason}); setting it anyway.`);
+  }
+  try {
+    await client.request(UPDATE_SPACE_PROPERTIES, { properties: { siteUrl } });
+    console.log(`✓ Set space Site URL → ${siteUrl}`);
+  } catch (err) {
+    const reason = err.response?.errors?.[0]?.message || err.message;
+    console.log(`\n⚠ Builder refused the Site URL (${reason}).`);
+    console.log("  Set it manually in Builder.io → Settings → Space:");
+    console.log(`  • Site URL → ${siteUrl}`);
+  }
+}
+
+// The space description has no Admin API mutation, so it must be applied
+// manually via the UI.
+function printSpaceDescriptionReminder(description) {
+  if (!description) return;
   console.log("\n⚠ One manual step required in Builder.io → Settings → Space:");
-  if (siteUrl) console.log(`  • Site URL  → ${siteUrl}`);
-  if (description) console.log(`  • Description → ${description}`);
-  console.log("  These values cannot be set via the Admin API and must be saved through the UI.");
+  console.log(`  • Description → ${description}`);
+  console.log("  The description cannot be set via the Admin API and must be saved through the UI.");
 }
 
 // Returns the first matching content entry, or null.
@@ -1118,25 +1162,32 @@ function isPortInUse(port) {
 }
 
 async function ensureDevServerRunning() {
-  const running = await isPortInUse(3000);
+  const url = `http://localhost:${APP.port}`;
+  const running = await isPortInUse(APP.port);
   if (running) {
-    console.log("• Dev server already running at http://localhost:3000 — skipping start.");
+    console.log(`• Dev server already running at ${url} — skipping start.`);
     return;
   }
-  console.log("\nStarting dev server...");
-  const rootDir = resolve(__dirname, "..");
-  const dev = spawn("pnpm", ["dev"], {
-    cwd: rootDir,
-    stdio: "inherit",
+  console.log(`\nStarting ${APP.name} dev server...`);
+  // The server outlives this script, so its output goes to a log file rather
+  // than the terminal — otherwise request logs keep printing over later
+  // prompts (e.g. the rest of `pnpm configure`).
+  const logPath = join(APP.path, "dev-server.log");
+  const log = openSync(logPath, "a");
+  const dev = spawn("pnpm", ["--filter", APP.name, "dev"], {
+    cwd: ROOT,
+    stdio: ["ignore", log, log],
     detached: true,
   });
   dev.unref();
-  console.log("✓ Dev server starting at http://localhost:3000\n");
+  closeSync(log); // the child holds its own copy of the descriptor
+  console.log(`✓ Dev server starting at ${url}`);
+  console.log(`  Logs: apps/${APP.dir}/dev-server.log (stop it with: kill $(lsof -ti:${APP.port}))\n`);
 }
 
-async function main() {
-  console.log(`\nProvisioning Builder space...\n`);
-
+// Creates the template's baseline models, or brings older spaces up to date.
+// Returns true if it created any model.
+async function provisionBaselineModels() {
   const { models } = await client.request(LIST_MODELS);
   const existingNames = new Set(models.map((m) => m.name));
 
@@ -1204,49 +1255,105 @@ async function main() {
   // update it directly (there's no "freshly created" branch to skip here).
   await ensurePreviewUrl(SYMBOL_MODEL_NAME, SYMBOL_PREVIEW_URL_LOGIC, models);
 
+  return createdSiteContext || createdArticle || createdNav || createdUrlRedirect;
+}
+
+// Clones another site's model definitions as they are now in its space,
+// including anything changed by hand in the Builder UI. The baseline retrofits
+// are skipped so they don't re-add fields the source site removed.
+// Returns true if it created any model.
+async function provisionModelsFrom(appRef) {
+  const source = findSiteApps().find((app) => app.dir === appRef || app.name === appRef);
+  if (!source) throw new Error(`--models-from: no site app named "${appRef}".`);
+  const sourceKey = readPrivateKey(source);
+  if (!sourceKey) {
+    throw new Error(`--models-from: apps/${source.dir}/.env.local has no BUILDER_PRIVATE_KEY.`);
+  }
+  console.log(`Model configuration: copied from ${source.dir}'s Builder space.`);
+  const { created } = await copyModels(sourceKey, PRIVATE_KEY);
+  return created > 0;
+}
+
+async function main() {
+  console.log(`\nProvisioning Builder space for ${APP.name}...\n`);
+
+  const createdModels = MODELS_FROM
+    ? await provisionModelsFrom(MODELS_FROM)
+    : await provisionBaselineModels();
+
   // The CDN takes a moment to register a brand-new model before it will
   // accept writes against it.
-  if (createdSiteContext || createdArticle || createdNav || createdUrlRedirect) {
+  if (createdModels) {
     await new Promise((r) => setTimeout(r, 2000));
   }
 
-  await ensureContent(
-    ARTICLE_MODEL_NAME,
-    SAMPLE_ARTICLE_HANDLE,
-    SAMPLE_ARTICLE_DATA
-  );
+  // A copied schema may not include every model the sample content needs.
+  const { models } = await client.request(LIST_MODELS);
+  const modelNames = new Set(models.map((m) => m.name));
+  const hasModel = (name) => {
+    if (modelNames.has(name)) return true;
+    console.log(`• Model "${name}" not in this space — skipping its sample content.`);
+    return false;
+  };
+
+  if (hasModel(ARTICLE_MODEL_NAME)) {
+    await ensureContent(
+      ARTICLE_MODEL_NAME,
+      SAMPLE_ARTICLE_HANDLE,
+      SAMPLE_ARTICLE_DATA
+    );
+  }
 
   // Seed the sample menus first, then wire their ids onto site-context.
-  const headerNavId = await ensureContent(
-    NAV_MODEL_NAME,
-    PRIMARY_NAV_NAME,
-    PRIMARY_NAV_DATA
-  );
-  const footerNavId = await ensureContent(
-    NAV_MODEL_NAME,
-    FOOTER_NAV_NAME,
-    FOOTER_NAV_DATA
-  );
-  await migrateNavEntryLinks(PRIMARY_NAV_NAME);
-  await migrateNavEntryLinks(FOOTER_NAV_NAME);
-  await ensureSiteContext(headerNavId, footerNavId);
+  let headerNavId = null;
+  let footerNavId = null;
+  if (hasModel(NAV_MODEL_NAME)) {
+    headerNavId = await ensureContent(
+      NAV_MODEL_NAME,
+      PRIMARY_NAV_NAME,
+      PRIMARY_NAV_DATA
+    );
+    footerNavId = await ensureContent(
+      NAV_MODEL_NAME,
+      FOOTER_NAV_NAME,
+      FOOTER_NAV_DATA
+    );
+    await migrateNavEntryLinks(PRIMARY_NAV_NAME);
+    await migrateNavEntryLinks(FOOTER_NAV_NAME);
+  }
+  if (hasModel(MODEL_NAME)) {
+    await ensureSiteContext(headerNavId, footerNavId);
+  }
 
   // Seed the sample redirect entry. next.config.ts reads this model by name at
   // build time, so a single well-known entry name keeps the lookup simple.
-  await ensureContent(
-    URL_REDIRECT_MODEL_NAME,
-    URL_REDIRECT_ENTRY_NAME,
-    URL_REDIRECT_DATA
+  if (hasModel(URL_REDIRECT_MODEL_NAME)) {
+    await ensureContent(
+      URL_REDIRECT_MODEL_NAME,
+      URL_REDIRECT_ENTRY_NAME,
+      URL_REDIRECT_DATA
+    );
+  }
+
+  // The home page and Site URL belong to the whole space, so when another
+  // site app uses this same space they are left as that site has them.
+  const sharedWith = findSiteApps().filter(
+    (app) => app.dir !== APP.dir && readPrivateKey(app) === PRIVATE_KEY
   );
+  if (sharedWith.length) {
+    const others = sharedWith.map((app) => app.dir).join(", ");
+    console.log(`\n• This space is shared with ${others} — leaving its home page and Site URL unchanged.`);
+  } else {
+    // Seed the home page at "/". The built-in `page` model is catch-all; we set
+    // URL targeting via `query` so fetchOneEntry({ urlPath: "/" }) resolves it.
+    // ensureHomePage always patches blocks so re-runs keep the page in sync.
+    await ensureHomePage();
 
-  // Seed the home page at "/". The built-in `page` model is catch-all; we set
-  // URL targeting via `query` so fetchOneEntry({ urlPath: "/" }) resolves it.
-  // ensureHomePage always patches blocks so re-runs keep the page in sync.
-  await ensureHomePage();
-
-  // Space-level siteUrl and description cannot be set via the Admin API —
-  // remind the user to apply them manually in the Builder.io Settings UI.
-  printSpaceSettingsReminder(BUILDER_SITE_URL, BUILDER_SPACE_DESCRIPTION);
+    // The Site URL is set through the Admin API; the description has no
+    // mutation, so remind the user to apply it in the Builder.io Settings UI.
+    await ensureSiteUrl(BUILDER_SITE_URL);
+    printSpaceDescriptionReminder(BUILDER_SPACE_DESCRIPTION);
+  }
 
   // The CMSLink plugin must be installed manually via the Builder.io UI.
   printPluginReminder(CMS_LINK_PLUGIN_URL);

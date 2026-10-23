@@ -18,144 +18,59 @@
  *   4. Seed the Builder space (runs `init:builder`) so the `site-context`,
  *      `article`, and `page` models exist, the home page is seeded at `/`,
  *      the space siteUrl + description are updated, and the app builds.
+ *      When another site app has its own space, it first asks whether to use
+ *      the template's baseline models or copy that site's models.
  *
  * This runs from the repo root (not from inside the app), so it can safely
  * rename the app directory as the final step. After a rename you must re-run
  * `pnpm install` to regenerate the lockfile for the new path.
+ *
+ * Once the repo is configured (the `app-0` placeholder has been renamed),
+ * re-running `pnpm configure` first asks whether to create another site. Yes
+ * runs the add-site flow (scripts/lib/add-site.mjs): it copies an existing site
+ * app to apps/<name> with its own port, .env.local, root dev/build scripts and
+ * (optionally) a seeded Builder space. No picks an existing site and re-runs
+ * the steps above for it.
  */
 
-import readline from "node:readline";
 import { spawnSync } from "node:child_process";
-import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  readdirSync,
-  renameSync,
-} from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve, join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
+import { join } from "node:path";
+import { ROOT, APPS_DIR, findSiteApps, isConfigured } from "./lib/apps.mjs";
+import { askWithDefault, askYesNo, askChoice, cancel, closePrompt } from "./lib/prompt.mjs";
+import { upsertEnv, readEnvValue, replaceAppNameInFile, isValidAppName } from "./lib/files.mjs";
+import { addSite } from "./lib/add-site.mjs";
+import { askModelSourceArgs } from "./lib/model-source.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(__dirname, "..");
-const APPS_DIR = join(ROOT, "apps");
+const PROJECT_CONFIG_PATH = join(ROOT, ".claude", "project-config.md");
 
-// A SINGLE long-lived readline interface for the whole script. Creating a new
-// interface per prompt breaks under piped/non-interactive stdin: once the first
-// reader hits EOF, later interfaces emit neither `line` nor `close`, their
-// promise hangs, and node exits silently when the event loop drains. With one
-// shared reader we queue every line and hand them out one prompt at a time, and
-// resolve "" after EOF so the script can never hang.
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-
-const lineQueue = [];
-let pendingResolver = null;
-let stdinEnded = false;
-
-// When `muted`, suppress echoed keystrokes (for the private key) while still
-// letting the prompt itself and the trailing newline through, so the terminal
-// doesn't garble. Echo is only emitted on a real TTY (terminal mode); under a
-// pipe there's nothing to mute.
-let muted = false;
-const originalWriteToOutput = rl._writeToOutput.bind(rl);
-rl._writeToOutput = (str) => {
-  if (muted && str !== "\n" && str !== "\r\n") return;
-  originalWriteToOutput(str);
-};
-
-rl.on("line", (line) => {
-  if (pendingResolver) {
-    const resolve = pendingResolver;
-    pendingResolver = null;
-    resolve(line);
-  } else {
-    lineQueue.push(line);
-  }
-});
-rl.on("close", () => {
-  stdinEnded = true;
-  if (pendingResolver) {
-    const resolve = pendingResolver;
-    pendingResolver = null;
-    resolve("");
-  }
-});
-
-function nextLine() {
-  if (lineQueue.length) return Promise.resolve(lineQueue.shift());
-  if (stdinEnded) return Promise.resolve("");
-  return new Promise((resolve) => {
-    pendingResolver = resolve;
-  });
+function readProjectConfig() {
+  return existsSync(PROJECT_CONFIG_PATH) ? readFileSync(PROJECT_CONFIG_PATH, "utf8") : "";
 }
 
-async function ask(query, { mask = false } = {}) {
-  process.stdout.write(query);
-  muted = mask;
-  const line = await nextLine();
-  if (muted) {
-    muted = false;
-    process.stdout.write("\n"); // we suppressed the user's Enter echo
-  }
-  return line.trim();
+// Extra sites added by `pnpm configure` record their Vercel project as
+// "- Project name (<app>): ..." lines alongside the primary "- Project name:".
+function readSiteVercelLines() {
+  return readProjectConfig().match(/^- Project name \(.+\):.*$/gm) || [];
 }
 
-async function askWithDefault(label, current, { mask = false } = {}) {
-  const shown = current ? (mask ? "•".repeat(8) : current) : "";
-  const suffix = current ? ` (enter to keep ${shown})` : "";
-  const answer = await ask(`${label}${suffix}: `, { mask });
-  return answer || current || "";
-}
-
-async function askYesNo(query, defaultNo = true) {
-  const answer = (await ask(`${query} ${defaultNo ? "(y/N)" : "(Y/n)"}: `))
-    .toLowerCase();
-  if (!answer) return !defaultNo;
-  return answer === "y" || answer === "yes";
-}
-
-// --- Locate the main Next.js app (the non-storybook workspace) ---
-function findMainApp() {
-  for (const entry of readdirSync(APPS_DIR)) {
-    const pkgPath = join(APPS_DIR, entry, "package.json");
-    if (!existsSync(pkgPath)) continue;
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    if (pkg.name !== "storybook-app" && deps["@builder.io/sdk-react"]) {
-      return { dir: entry, name: pkg.name, path: join(APPS_DIR, entry) };
-    }
-  }
-  throw new Error("Could not find the main Next.js app under apps/.");
-}
-
-// --- .env.local writing: preserve existing lines, upsert the two keys ---
-function upsertEnv(content, key, value) {
-  const line = `${key}=${value}`;
-  const re = new RegExp(`^${key}=.*$`, "m");
-  if (re.test(content)) return content.replace(re, line);
-  return `${content.replace(/\n*$/, "")}\n${line}\n`;
-}
-
-function readEnvValue(content, key) {
-  const match = content.match(new RegExp(`^${key}=(.*)$`, "m"));
-  return match ? match[1].trim() : "";
-}
-
-// --- Replace every occurrence of the app name token across a file ---
-function replaceInFile(filePath, from, to) {
-  if (!existsSync(filePath)) return;
-  const original = readFileSync(filePath, "utf8");
-  const updated = original.split(from).join(to);
-  if (updated !== original) writeFileSync(filePath, updated);
-}
-
-function isValidAppName(name) {
-  return /^[a-z][a-z0-9-]*$/.test(name);
+// The project-config label holding this app's Vercel project name.
+function vercelLabelFor(app) {
+  const siteLabel = `Project name (${app.dir})`;
+  return readConfigValue(siteLabel) !== null ? siteLabel : "Project name";
 }
 
 // --- Write .claude/project-config.md from collected integration values ---
-function writeProjectConfig({ jira, vercelProject }) {
-  const path = join(ROOT, ".claude", "project-config.md");
+function writeProjectConfig({ jira, vercelLabel, vercelProject }) {
+  let primaryProject = readConfigValue("Project name") || "";
+  let siteLines = readSiteVercelLines();
+  if (vercelLabel === "Project name") {
+    primaryProject = vercelProject || "";
+  } else {
+    siteLines = siteLines.map((line) =>
+      line.startsWith(`- ${vercelLabel}:`) ? `- ${vercelLabel}: ${vercelProject}` : line
+    );
+  }
   const content = `# Project Config (read by .claude/commands/*)
 
 This file holds the per-project values the Claude Code commands need. It is
@@ -168,26 +83,22 @@ populated by \`pnpm configure\`. You can also edit it by hand.
 - Base URL: ${jira ? jira.baseUrl : ""}
 
 ## Vercel
-- Project name: ${vercelProject || ""}
+${["- Project name: " + primaryProject, ...siteLines].join("\n")}
 `;
-  writeFileSync(path, content);
-  return path;
+  writeFileSync(PROJECT_CONFIG_PATH, content);
+  return PROJECT_CONFIG_PATH;
 }
 
-// --- Read an existing project-config.md value for prompt defaults ---
+// --- Read an existing project-config.md value (null when the line is absent) ---
 function readConfigValue(label) {
-  const path = join(ROOT, ".claude", "project-config.md");
-  if (!existsSync(path)) return "";
-  const content = readFileSync(path, "utf8");
-  const match = content.match(new RegExp(`^- ${label}:\\s*(.*)$`, "m"));
-  return match ? match[1].trim() : "";
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = readProjectConfig().match(new RegExp(`^- ${escaped}:[ \\t]*(.*)$`, "m"));
+  return match ? match[1].trim() : null;
 }
 
-async function main() {
-  console.log("\nBuilder.io App Router template — setup\n");
-
-  const app = findMainApp();
-  console.log(`Main app: apps/${app.dir} (package "${app.name}")\n`);
+async function configureSite(app) {
+  console.log(`Site app: apps/${app.dir} (package "${app.name}")`);
+  console.log("Nothing is written until you confirm at the end. Press Ctrl+C at any prompt to cancel.\n");
 
   // --- 1. Credentials ---
   const envPath = join(app.path, ".env.local");
@@ -215,15 +126,13 @@ async function main() {
 
   envContent = upsertEnv(envContent, "NEXT_PUBLIC_BUILDER_API_KEY", publicKey);
   envContent = upsertEnv(envContent, "BUILDER_PRIVATE_KEY", privateKey);
-  writeFileSync(envPath, envContent);
-  console.log(`\n✓ Wrote keys to apps/${app.dir}/.env.local`);
 
   // --- 1b. App name (optionally renames the app and sets NEXT_PUBLIC_SITE_CONTEXT_NAME) ---
   let appName = app.dir;
   {
     while (true) {
       const candidate = (await askWithDefault(
-        "App name (press Enter to keep, or enter a new name to rename — lowercase, letters/numbers/dashes)",
+        "App name — type a new name to rename it (lowercase letters, numbers, dashes)",
         app.dir
       )).toLowerCase();
       if (!candidate || candidate === app.dir) {
@@ -242,12 +151,7 @@ async function main() {
       break;
     }
   }
-  const currentSiteContextName = readEnvValue(envContent, "NEXT_PUBLIC_SITE_CONTEXT_NAME");
-  if (appName !== currentSiteContextName) {
-    envContent = upsertEnv(envContent, "NEXT_PUBLIC_SITE_CONTEXT_NAME", appName);
-    writeFileSync(envPath, envContent);
-    console.log(`✓ Set NEXT_PUBLIC_SITE_CONTEXT_NAME="${appName}" in apps/${app.dir}/.env.local`);
-  }
+  envContent = upsertEnv(envContent, "NEXT_PUBLIC_SITE_CONTEXT_NAME", appName);
 
   // --- 1c. Builder space settings (siteUrl + description) ---
   console.log("\nBuilder space settings (used by the editor preview and Builder UI):");
@@ -266,18 +170,30 @@ async function main() {
     "BUILDER_SPACE_DESCRIPTION",
     builderSpaceDescription
   );
-  writeFileSync(envPath, envContent);
-  console.log(`✓ Wrote BUILDER_SITE_URL and BUILDER_SPACE_DESCRIPTION to apps/${app.dir}/.env.local`);
 
   // --- 1d. Claude Code command integrations (Jira + Vercel) ---
   console.log("\nClaude Code command config (.claude/project-config.md):");
-  let jira = null;
-  if (await askYesNo("\nConfigure Jira integration for the Claude Code commands?")) {
+  // project-config.md is shared by every site, so an existing Jira config is
+  // kept unless the user chooses to change it.
+  const existingJira = readConfigValue("Configured") === "yes"
+    ? {
+        projectKey: readConfigValue("Project key") || "",
+        cloudId: readConfigValue("Cloud ID") || "",
+        baseUrl: readConfigValue("Base URL") || "",
+      }
+    : null;
+  let jira = existingJira;
+  const jiraQuestion = existingJira
+    ? `Jira is configured for ${existingJira.projectKey}. Change it?`
+    : "Configure Jira integration for the Claude Code commands?";
+  if (await askYesNo(jiraQuestion)) {
+    jira = null;
     // Reconstruct a sample URL from existing config so re-running setup pre-fills nicely.
-    const existingKey = readConfigValue("Project key");
-    const existingBase = readConfigValue("Base URL");
+    const existingKey = readConfigValue("Project key") || "";
+    const existingBase = readConfigValue("Base URL") || "";
     const candidate = (existingKey && existingBase) ? `${existingBase}${existingKey}-1` : "";
-    const defaultJiraUrl = /^https?:\/\//.test(candidate) ? candidate : "";
+    // When changing an existing config, Enter (no URL) turns Jira off instead.
+    const defaultJiraUrl = !existingJira && /^https?:\/\//.test(candidate) ? candidate : "";
 
     let parsed = false;
     while (!parsed) {
@@ -286,7 +202,7 @@ async function main() {
         defaultJiraUrl
       );
       if (!jiraUrl) {
-        console.log("  Skipping Jira config.");
+        console.log(existingJira ? "  Turning off Jira config." : "  Skipping Jira config.");
         break;
       }
       const m = jiraUrl.match(/^(https?:\/\/([^/]+)\/browse\/)([A-Za-z][A-Za-z0-9]*)-\d+/i);
@@ -302,19 +218,42 @@ async function main() {
       parsed = true;
     }
   }
+  const vercelLabel = vercelLabelFor(app);
   const vercelProject = await askWithDefault(
     "Vercel project name (for preview-deployment detection)",
-    readConfigValue("Project name") || appName
+    readConfigValue(vercelLabel) || appName
   );
-  const cfgPath = writeProjectConfig({ jira, vercelProject });
+
+  // --- 1e. Where the space's models come from (only asked when another site has its own space) ---
+  const modelArgs = await askModelSourceArgs(findSiteApps(), app.dir, privateKey);
+  const seedArgs = ["--filter", app.name, "init:builder", ...modelArgs];
+
+  // --- 2. Confirm, then write ---
+  const newName = appName !== app.dir ? appName : null;
+  console.log("\nSummary:");
+  console.log(`  Site            apps/${app.dir}${newName ? ` → renamed to apps/${newName}` : ""}`);
+  console.log(`  Builder keys    saved to apps/${app.dir}/.env.local`);
+  console.log(`  Models          ${modelArgs.length ? `copied from ${modelArgs[0].split("=")[1]}'s space` : "template baseline"}`);
+  if (modelArgs.length) {
+    console.log("  ⚠ Copying replaces every model in this space that has the same name as one in the");
+    console.log("    source space (its own webhooks are kept).");
+  }
+  console.log("  ⚠ Seeding rewrites the home page at / and the space Site URL, unless another site");
+  console.log("    app uses this same space.");
+  console.log(`  Site URL        ${builderSiteUrl}`);
+  console.log(`  Description     ${builderSpaceDescription}`);
+  console.log(`  Jira            ${jira ? jira.projectKey : "not configured"}`);
+  console.log(`  Vercel project  ${vercelProject}`);
+  if (!await askYesNo("Apply this configuration and seed the Builder space?", false)) cancel();
+
+  writeFileSync(envPath, envContent);
+  console.log(`\n✓ Wrote apps/${app.dir}/.env.local`);
+  const cfgPath = writeProjectConfig({ jira, vercelLabel, vercelProject });
   console.log(`✓ Wrote ${cfgPath.replace(ROOT + "/", "")}`);
 
-  // --- 2. Rename derived from app name (already validated above) ---
-  const newName = appName !== app.dir ? appName : null;
-
   // --- 3. Seed Builder models/content (before any rename, using the current name) ---
-  console.log(`\nSeeding Builder models (pnpm --filter ${app.name} init:builder)...\n`);
-  const seed = spawnSync("pnpm", ["--filter", app.name, "init:builder"], {
+  console.log(`\nSeeding Builder models (pnpm ${seedArgs.join(" ")})...\n`);
+  const seed = spawnSync("pnpm", seedArgs, {
     cwd: ROOT,
     stdio: "inherit",
   });
@@ -336,7 +275,7 @@ async function main() {
       join(app.path, "package.json"),
       join(ROOT, ".claude", "project-config.md"),
     ];
-    for (const file of filesToUpdate) replaceInFile(file, app.dir, newName);
+    for (const file of filesToUpdate) replaceAppNameInFile(file, app.dir, newName);
     renameSync(app.path, join(APPS_DIR, newName));
     console.log(`✓ Renamed app to "${newName}".`);
     console.log(
@@ -344,8 +283,29 @@ async function main() {
     );
   }
 
+}
+
+async function main() {
+  console.log("\nBuilder.io App Router template — setup\n");
+
+  const apps = findSiteApps();
+  if (!isConfigured()) {
+    await configureSite(apps[0]);
+  } else {
+    console.log(`This repository is already configured (sites: ${apps.map((a) => a.dir).join(", ")}).`);
+    if (await askYesNo("Create another site?")) {
+      await addSite(apps);
+    } else {
+      const app = apps.length === 1
+        ? apps[0]
+        : apps[await askChoice("Reconfigure which site?", apps.map((a) => a.dir))];
+      console.log();
+      await configureSite(app);
+    }
+  }
+
   console.log("\n✓ Setup complete.\n");
-  rl.close();
+  closePrompt();
 }
 
 main().catch((err) => {
