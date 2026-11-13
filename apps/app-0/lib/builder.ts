@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { fetchOneEntry } from "@builder.io/sdk-react";
+import { DEFAULT_LOCALE } from "@repo/components/utils";
 import type { SiteContext } from "@repo/types";
 
 // Central Builder.io constants for the App Router.
@@ -14,7 +15,7 @@ export const SITE_CONTEXT_NAME =
 // cache() so the per-locale fetch is deduped across layout, generateMetadata,
 // and the page component within a single request render.
 export const getSiteContext = cache(
-  async (locale: string = "en"): Promise<SiteContext | null> => {
+  async (locale: string = DEFAULT_LOCALE): Promise<SiteContext | null> => {
     const siteContext = await fetchOneEntry({
       model: "site-context",
       apiKey: BUILDER_API_KEY,

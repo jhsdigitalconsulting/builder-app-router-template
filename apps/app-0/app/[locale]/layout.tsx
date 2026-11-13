@@ -1,8 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Poppins, Nothing_You_Could_Do } from "next/font/google";
-import "../styles/globals.css";
+import "../../styles/globals.css";
 import { SiteContextProvider } from "@repo/components";
-import { getSiteContext } from "../lib/builder";
+import { DEFAULT_LOCALE, matchLocale } from "@repo/components/utils";
+import { getSiteContext } from "../../lib/builder";
 
 const fontSans = Poppins({
   subsets: ["latin"],
@@ -36,15 +37,20 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({
   children,
+  params,
 }: {
   children: React.ReactNode;
+  params: Promise<{ locale: string }>;
 }) {
-  // site-context is global and largely locale-independent. The shared root
-  // layout defaults to 'en'; per-page locale is resolved in the routes.
-  const siteContext = await getSiteContext("en");
+  // The proxy guarantees a valid locale here. If a request slips past it
+  // (e.g. "/foo.html"), fall back to the default so the page still renders
+  // and the route's own validation can 404 it.
+  const { locale: rawLocale } = await params;
+  const locale = matchLocale(rawLocale) ?? DEFAULT_LOCALE;
+  const siteContext = await getSiteContext(locale);
 
   return (
-    <html lang="en">
+    <html lang={locale}>
       <head>
         <link
           rel="stylesheet"

@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { fetchEntries } from "@builder.io/sdk-react";
 import { BUILDER_API_KEY } from "../lib/builder";
+import { buildLocaleAlternates } from "../lib/page-utils";
 
 // Regenerate the sitemap at most once per day. Builder `fetchEntries` is an
 // uncached fetch in Next 16, so without this every crawler hit re-runs both
@@ -60,6 +61,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }
 
   const toUrl = (path: string) => `${base}/${path.replace(/^\/+/, "")}`;
+  // hreflang alternates for every locale plus x-default. The default locale is
+  // unprefixed, so the entry URL (toUrl) is also its own alternate.
+  const alternatesFor = (path: string) => ({
+    languages: buildLocaleAlternates(`/${path.replace(/^\/+/, "")}`, "en-US", base)
+      .languages,
+  });
   const toDate = (lastUpdated: unknown) =>
     new Date((lastUpdated as number) || Date.now());
 
@@ -74,6 +81,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       .map((page) => ({
         url: toUrl(page.data.url),
         lastModified: toDate(page.lastUpdated),
+        alternates: alternatesFor(page.data.url),
       })),
     {
       url: toUrl("blogs"),
@@ -86,6 +94,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       .map((post) => ({
         url: toUrl(`blogs/${post.data.handle}`),
         lastModified: toDate(post.lastUpdated),
+        alternates: alternatesFor(`blogs/${post.data.handle}`),
       })),
   ];
 

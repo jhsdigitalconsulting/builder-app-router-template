@@ -1,4 +1,5 @@
 import React from "react";
+import { DEFAULT_LOCALE } from "@repo/components/utils";
 import { Footer } from "@repo/components";
 import type { ModelReference, SiteContext } from "@repo/types";
 import { getSiteContext } from "../lib/builder";
@@ -23,7 +24,7 @@ interface SiteFooterProps {
 export default async function SiteFooter({
   siteContext,
   override,
-  locale = "en",
+  locale = DEFAULT_LOCALE,
 }: SiteFooterProps) {
   const site =
     siteContext ?? ((await getSiteContext(locale)) as SiteContext | null);

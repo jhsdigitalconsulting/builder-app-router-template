@@ -1,35 +1,51 @@
-import { getLocaleFromPathname } from "@repo/components/utils";
+import {
+  DEFAULT_LOCALE,
+  SUPPORTED_LOCALES,
+  localizePath,
+} from "@repo/components/utils";
 
-export const DEFAULT_LOCALE = "en";
-export const SUPPORTED_LOCALES = ["en", "es"];
+export { DEFAULT_LOCALE, SUPPORTED_LOCALES };
 
-// Resolve the locale + Builder urlPath from the catch-all route segments.
-// English lives at the root (/about); Spanish is prefixed (/es/about).
-export function resolvePageParams(segments: string[] | undefined): {
-  locale: string;
-  urlPath: string;
-} {
+// Locales whose pages are generated at build time. Every other locale is
+// rendered on first request and then cached (ISR), because inline localization
+// serves the same URLs in all 36 locales and pre-building them all would
+// multiply build-time Builder fetches by 36. Add locales here to prebuild them.
+export const PREBUILD_LOCALES: string[] = [DEFAULT_LOCALE];
+
+// The locale comes from the [locale] route segment (the proxy rewrites
+// unprefixed URLs to the default locale). The catch-all segments are therefore
+// only the Builder urlPath.
+export function toUrlPath(segments: string[] | undefined): string {
   const parts = Array.isArray(segments) ? segments : [];
-  const pathname = "/" + parts.join("/");
-
-  const detected = getLocaleFromPathname(pathname, SUPPORTED_LOCALES);
-  const locale = detected || DEFAULT_LOCALE;
-
-  // Strip a leading locale segment to compute the Builder urlPath.
-  const remaining = detected ? parts.slice(1) : parts;
-  const urlPath = "/" + remaining.join("/");
-
-  return { locale, urlPath: urlPath === "/" ? "/" : urlPath.replace(/\/$/, "") };
+  return "/" + parts.join("/");
 }
 
-export function formatLastUpdatedDate(dateInput: unknown): string {
+// Absolute URLs for a path in every locale plus x-default, for hreflang
+// (metadata alternates and the sitemap). The default locale is unprefixed.
+export function buildLocaleAlternates(
+  path: string,
+  locale: string,
+  origin: string = process.env.NEXT_PUBLIC_SITE_URL || ""
+): { canonical: string; languages: Record<string, string> } {
+  const languages: Record<string, string> = {};
+  for (const l of SUPPORTED_LOCALES) {
+    languages[l] = `${origin}${localizePath(path, l)}`;
+  }
+  languages["x-default"] = `${origin}${localizePath(path, DEFAULT_LOCALE)}`;
+  return { canonical: languages[locale], languages };
+}
+
+export function formatLastUpdatedDate(
+  dateInput: unknown,
+  locale: string = DEFAULT_LOCALE
+): string {
   if (!dateInput) return "Date not available";
 
   const date = new Date(dateInput as string | number);
 
   if (isNaN(date.getTime())) return "Invalid date";
 
-  return date.toLocaleDateString("en-US", {
+  return date.toLocaleDateString(locale, {
     year: "numeric",
     month: "long",
     day: "numeric",

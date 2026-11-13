@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { SUPPORTED_LOCALES } from "@repo/components/utils";
 
 // Maps a Builder.io model to the published path that must be revalidated.
 // `page` revalidates its own `data.url`; `article` lives under a fixed route
@@ -87,7 +88,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Missing path" }, { status: 400 });
   }
 
-  revalidatePath(path);
+  // Pages render under app/[locale]/... (the proxy rewrites unprefixed URLs to
+  // /en-US/...), and inline localization serves one entry in every locale, so
+  // publishing must refresh the path in all locales.
+  const suffix = path === "/" ? "" : path.startsWith("/") ? path : `/${path}`;
+  for (const locale of SUPPORTED_LOCALES) {
+    revalidatePath(`/${locale}${suffix}`);
+  }
   // Keep the generated sitemap fresh when content is published or unpublished.
   revalidatePath("/sitemap.xml");
 

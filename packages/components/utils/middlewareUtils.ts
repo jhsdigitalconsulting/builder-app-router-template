@@ -1,46 +1,87 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-import { getLocaleRedirectPath } from "./localeUtils";
+import {
+  DEFAULT_LOCALE,
+  getLocaleFromPathname,
+  matchAcceptLanguage,
+  matchLocale,
+  removeLocaleFromPathname,
+} from "./localeUtils";
 
-export const handleLocaleRedirect = (request: NextRequest) => {
-  const url = new URL(request.url);
-  
-  // Get preferred language from Accept-Language header as fallback
-  const acceptLanguage = request.headers.get('accept-language');
-  const preferredLanguage = request.cookies.get("preferred_language")?.value || 
-    acceptLanguage?.split(',')[0]?.split('-')[0];
+const LOCALE_COOKIE = "preferred_language";
+const ONE_YEAR = 31536000;
 
-  const defaultLocale = 'en';
-  const supportedLocales = ['en', 'es', 'fr', 'de', 'it', 'pt', 'ja', 'ko', 'zh'];
+// Builder's visual editor loads pages with `builder.*` query params (or the
+// __builder_editing__ path). Those requests must never be redirected away from
+// the URL the editor asked for.
+const isBuilderEditorRequest = (url: URL) =>
+  url.pathname.includes("/__builder_editing__") ||
+  Array.from(url.searchParams.keys()).some((key) => key.startsWith("builder."));
 
-  const redirectPath = getLocaleRedirectPath({
-    pathname: url.pathname,
-    preferredLanguage,
-    supportedLocales,
-    defaultLocale,
-  });
+/**
+ * Locale routing. Pages live under app/[locale]/..., English (US) is served at
+ * the root, every other locale is prefixed ("/de-DE/about").
+ *
+ *  - "/en-US/x"        -> redirect to "/x" (one canonical URL), remember choice
+ *  - "/de-de/x"        -> redirect to canonical casing "/de-DE/x"
+ *  - "/de-DE/x"        -> pass through, remember choice in the cookie
+ *  - "/x" (no locale)  -> redirect to the visitor's preferred locale (cookie,
+ *                         then Accept-Language) when it is not the default,
+ *                         otherwise rewrite internally to "/en-US/x"
+ *
+ * An explicit locale in the URL always wins over the browser's preference.
+ */
+export const handleLocale = (request: NextRequest) => {
+  const url = request.nextUrl.clone();
+  const isEditor = isBuilderEditorRequest(url);
+  const cookieLocale = matchLocale(request.cookies.get(LOCALE_COOKIE)?.value);
 
-  if (redirectPath) {
-    const redirectUrl = new URL(redirectPath, request.url);
-    const response = NextResponse.redirect(redirectUrl);
-    
-    // Set the preferred language cookie if we're redirecting
-    if (preferredLanguage && supportedLocales.includes(preferredLanguage)) {
-      response.cookies.set('preferred_language', preferredLanguage, {
-        maxAge: 31536000, // 1 year
-        path: '/',
+  const rememberLocale = (response: NextResponse, locale: string) => {
+    if (cookieLocale !== locale) {
+      response.cookies.set(LOCALE_COOKIE, locale, {
+        maxAge: ONE_YEAR,
+        path: "/",
       });
     }
-    
     return response;
+  };
+
+  const pathLocale = getLocaleFromPathname(url.pathname);
+
+  if (pathLocale) {
+    const firstSegment = url.pathname.split("/").filter(Boolean)[0];
+    const rest = removeLocaleFromPathname(url.pathname);
+
+    if (pathLocale === DEFAULT_LOCALE && !isEditor) {
+      url.pathname = rest;
+      return rememberLocale(NextResponse.redirect(url), pathLocale);
+    }
+    if (firstSegment !== pathLocale && !isEditor) {
+      url.pathname = `/${pathLocale}${rest === "/" ? "" : rest}`;
+      return rememberLocale(NextResponse.redirect(url), pathLocale);
+    }
+    return isEditor ? NextResponse.next() : rememberLocale(NextResponse.next(), pathLocale);
   }
-  
-  return NextResponse.next();
+
+  const preferred =
+    cookieLocale ?? matchAcceptLanguage(request.headers.get("accept-language"));
+
+  if (!isEditor && preferred && preferred !== DEFAULT_LOCALE) {
+    url.pathname = `/${preferred}${url.pathname === "/" ? "" : url.pathname}`;
+    return rememberLocale(NextResponse.redirect(url), preferred);
+  }
+
+  // Default locale: serve app/[locale] with locale = en-US without exposing it.
+  url.pathname = `/${DEFAULT_LOCALE}${url.pathname === "/" ? "" : url.pathname}`;
+  return NextResponse.rewrite(url);
 };
 
 export const handleErrorRedirect = (request: NextRequest) => {
   const url = new URL(request.url);
+  // The /500 page itself carries errorCode; don't redirect it to itself.
+  if (url.pathname === "/500") return;
+
   const errorCode = url.searchParams.get("errorCode");
   const errorMessage = url.searchParams.get("errorMessage");
 
