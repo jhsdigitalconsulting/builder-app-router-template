@@ -80,7 +80,7 @@ This is a Turborepo monorepo with a Next.js 16 **App Router** application built 
 
 ### App Router Structure (`apps/app-0/app/`)
 - `layout.tsx` - Root layout
-- `[[...page]]/` - Catch-all route rendering Builder.io page content
+- `[locale]/` - Locale segment wrapping every page route (`layout.tsx`, `[[...page]]/` catch-all for Builder.io content, `blogs/`, `section-editors/`, `not-found.tsx`); locales are the ones enabled in the Builder space (see docs/DESIGN_PATTERNS.md section 4)
 - `blogs/` - Blog list and `[handle]` article routes
 - `section-editors/` - Builder.io section editing routes
 - `not-found.tsx` - 404 handling

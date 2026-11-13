@@ -1,7 +1,8 @@
 import React from "react";
 import { fetchOneEntry } from "@builder.io/sdk-react";
-import RenderBuilderContent from "../../../../components/RenderBuilderContent";
-import { BUILDER_API_KEY, getSiteContext } from "../../../../lib/builder";
+import { DEFAULT_LOCALE } from "@repo/components/utils";
+import RenderBuilderContent from "../../../../../components/RenderBuilderContent";
+import { BUILDER_API_KEY, getSiteContext } from "../../../../../lib/builder";
 
 // The editor must always see live (including unpublished) symbol content.
 export const dynamic = "force-dynamic";
@@ -51,7 +52,7 @@ export default async function SymbolEditorPage({
 
   const [symbol, siteContext] = await Promise.all([
     lookup ? fetchSymbol(name) : Promise.resolve(null),
-    getSiteContext("en"),
+    getSiteContext(DEFAULT_LOCALE),
   ]);
 
   return (

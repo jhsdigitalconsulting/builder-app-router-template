@@ -67,3 +67,6 @@ storybook-static/
 .cache/
 .parcel-cache/
 .playwright-mcp/*.*
+
+# Generated from the Builder space by scripts/generate-locales.mjs
+packages/components/utils/enabled-locales.json

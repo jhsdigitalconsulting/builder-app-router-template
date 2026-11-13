@@ -4,14 +4,17 @@ import { notFound } from "next/navigation";
 import { fetchOneEntry, fetchEntries } from "@builder.io/sdk-react";
 import { PageSchema, buildPageMetadata, FAQSchemaData } from "@repo/components";
 import type { SiteContext } from "@repo/types";
-import { BUILDER_API_KEY, getSiteContext } from "../../lib/builder";
+import { localizePath, normalizeLocale } from "@repo/components/utils";
+import { BUILDER_API_KEY, getSiteContext } from "../../../lib/builder";
 import {
-  resolvePageParams,
+  PREBUILD_LOCALES,
+  buildLocaleAlternates,
+  toUrlPath,
   formatLastUpdatedDate,
   isPreviewingFromSearchParams,
-} from "../../lib/page-utils";
-import RenderBuilderContent from "../../components/RenderBuilderContent";
-import PageShell from "../../components/PageShell";
+} from "../../../lib/page-utils";
+import RenderBuilderContent from "../../../components/RenderBuilderContent";
+import PageShell from "../../../components/PageShell";
 
 // ISR window (seconds) for published Builder.io content. Must be a literal —
 // App Router segment config is statically analyzed and rejects runtime/env
@@ -45,7 +48,8 @@ const toLabel = (segment: string) =>
 async function buildBreadcrumbTrail(
   urlPath: string,
   currentPage: any,
-  siteUrl: string
+  siteUrl: string,
+  locale: string
 ): Promise<{ label: string; href: string }[]> {
   const segments = urlPath.split("/").filter(Boolean);
   if (segments.length === 0) return [];
@@ -69,6 +73,9 @@ async function buildBreadcrumbTrail(
             userAttributes: { urlPath: segmentPath },
             fields: "data.title,data.metadata",
             options: { noTargeting: true },
+            // Localized titles: without this, ancestors resolve to the
+            // default locale and breadcrumbs/schema mix languages.
+            locale,
           });
           label =
             ancestorPage?.data?.metadata?.breadcrumbTitle ||
@@ -79,11 +86,17 @@ async function buildBreadcrumbTrail(
         }
       }
 
-      return { label, href: `${siteUrl}${segmentPath}` };
+      return {
+        label,
+        href: `${siteUrl}${localizePath(segmentPath, locale)}`,
+      };
     })
   );
 
-  return [{ label: "Home", href: siteUrl }, ...resolvedSegments];
+  return [
+    { label: "Home", href: `${siteUrl}${localizePath("/", locale)}` },
+    ...resolvedSegments,
+  ];
 }
 
 function extractFaqItems(blocks: any[]): Array<{ name: string; text: string }> {
@@ -114,7 +127,9 @@ function shouldExcludePath(url: string): boolean {
   return isExcludedDirectory || isStandalonePage;
 }
 
-export async function generateStaticParams(): Promise<{ page: string[] }[]> {
+export async function generateStaticParams(): Promise<
+  { locale: string; page: string[] }[]
+> {
   const pages = await fetchEntries({
     model: "page",
     apiKey: BUILDER_API_KEY,
@@ -122,29 +137,39 @@ export async function generateStaticParams(): Promise<{ page: string[] }[]> {
     options: { noTargeting: true },
   });
 
-  return pages
+  const urls = pages
     .map((page) => String(page.data?.url))
-    .filter((url) => !shouldExcludePath(url))
-    .map((url) => ({
+    .filter((url) => !shouldExcludePath(url));
+
+  // Only PREBUILD_LOCALES are generated at build time; other locales render on
+  // first request and are then cached (dynamicParams defaults to true).
+  return PREBUILD_LOCALES.flatMap((locale) =>
+    urls.map((url) => ({
+      locale,
       page: url.split("/").filter(Boolean),
-    }));
+    }))
+  );
 }
 
 interface PageRouteProps {
-  params: Promise<{ page?: string[] }>;
+  params: Promise<{ locale: string; page?: string[] }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 export async function generateMetadata({
   params,
 }: PageRouteProps): Promise<Metadata> {
-  const { page: segments } = await params;
-  const { locale, urlPath } = resolvePageParams(segments);
+  const { locale: rawLocale, page: segments } = await params;
+  const locale = normalizeLocale(rawLocale);
+  if (!locale) return {};
+  const urlPath = toUrlPath(segments);
 
   const [page, siteContext] = await Promise.all([
     fetchPage(urlPath, locale),
     getSiteContext(locale),
   ]);
+
+  const { canonical, languages } = buildLocaleAlternates(urlPath, locale);
 
   const base = buildPageMetadata({
     title: page?.data?.title || "",
@@ -154,6 +179,9 @@ export async function generateMetadata({
     url: page?.data?.url,
     type: "website",
     keywords: page?.data?.metadata?.keywords,
+    locale,
+    canonical,
+    languages,
   });
 
   // The original page forced noindex.
@@ -164,9 +192,13 @@ export async function generateMetadata({
 }
 
 export default async function Page({ params, searchParams }: PageRouteProps) {
-  const { page: segments } = await params;
+  const { locale: rawLocale, page: segments } = await params;
   const resolvedSearchParams = await searchParams;
-  const { locale, urlPath } = resolvePageParams(segments);
+  const locale = normalizeLocale(rawLocale);
+  // The proxy only produces valid locales; anything else (e.g. "/foo.html"
+  // slipping past it) is a 404.
+  if (!locale || locale !== rawLocale) notFound();
+  const urlPath = toUrlPath(segments);
 
   const [page, siteContext] = await Promise.all([
     fetchPage(urlPath, locale),
@@ -179,12 +211,12 @@ export default async function Page({ params, searchParams }: PageRouteProps) {
     notFound();
   }
 
-  const lastUpdatedDate = formatLastUpdatedDate(page?.lastUpdated);
+  const lastUpdatedDate = formatLastUpdatedDate(page?.lastUpdated, locale);
   const site = siteContext as SiteContext | null;
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "";
 
-  const breadcrumbTrail = await buildBreadcrumbTrail(urlPath, page, siteUrl);
+  const breadcrumbTrail = await buildBreadcrumbTrail(urlPath, page, siteUrl, locale);
   const faqItems = extractFaqItems(page?.data?.blocks || []);
   const breadcrumbSchema =
     breadcrumbTrail.length > 1
@@ -211,7 +243,11 @@ export default async function Page({ params, searchParams }: PageRouteProps) {
           <PageSchema
             title={page?.data?.title || ""}
             description={page?.data?.metadata?.description || ""}
-            url={page?.data?.url ? `${siteUrl}${page.data.url}` : siteUrl}
+            url={
+              page?.data?.url
+                ? `${siteUrl}${localizePath(page.data.url, locale)}`
+                : `${siteUrl}${localizePath("/", locale)}`
+            }
             siteName={site.data.siteName}
             siteUrl={siteUrl}
             organizationName={site.data.organization?.name || site.data.siteName}

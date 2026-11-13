@@ -209,40 +209,36 @@ export function proxy(request: NextRequest) {
   const errorRedirect = handleErrorRedirect(request);
   if (errorRedirect) return errorRedirect;
 
-  const url = new URL(request.url);
-  const hasFileExtension = /\.[^/]*$/.test(url.pathname);
-  if (!hasFileExtension) {
-    const localeResponse = handleLocaleRedirect(request);
-    if (localeResponse) return localeResponse;
-  }
-
-  let response = NextResponse.next();
-  response = handleDeploymentProtection(request, response);
-  return response;
+  const hasFileExtension = /\.[^/]*$/.test(request.nextUrl.pathname);
+  const response = hasFileExtension ? NextResponse.next() : handleLocale(request);
+  return handleDeploymentProtection(request, response);
 }
-
-export const config = {
-  matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|500|.*\\.(?:js|mjs|css|woff2?|ttf|otf|eot|png|jpe?g|gif|webp|avif|svg|ico|txt|xml|map)$).*)",
-  ],
-};
 ```
 
-- Handlers (`handleLocaleRedirect`, `handleErrorRedirect`, `handleDeploymentProtection`) come from `@repo/components/utils/middlewareUtils`.
-- Static-asset extensions are excluded from the matcher so they bypass the proxy entirely (zero MIU). **Document extensions (`.html`/`.pdf`) are deliberately NOT excluded** so legacy redirects still flow through.
+- Handlers (`handleLocale`, `handleErrorRedirect`, `handleDeploymentProtection`) come from `@repo/components/utils/middlewareUtils`.
+- The matcher excludes `api`, `dynamiclink`, `_next/*`, `favicon.ico` and static-asset extensions, so those bypass the proxy entirely (zero MIU). **Document extensions (`.html`/`.pdf`) are deliberately NOT excluded** so legacy redirects still flow through.
 
-### i18n model
-- **English at the root** (`/about`); **Spanish prefixed** (`/es/about`).
-- `apps/app-0/lib/page-utils.ts`:
-  ```ts
-  export const DEFAULT_LOCALE = "en";
-  export const SUPPORTED_LOCALES = ["en", "es"];
-  ```
-  `resolvePageParams(segments)` detects the locale, strips a leading locale segment, and returns `{ locale, urlPath }` for the Builder fetch.
+### i18n model (inline localization)
+- Builder **inline localization**: one entry holds localized fields. The `locale` is passed to **both** `fetchOneEntry({ locale })` and `<Content locale>`.
+- Locales are ISO `language-REGION` tags (`en-US`, `de-CH`, …). `DEFAULT_LOCALE` and `SUPPORTED_LOCALES` live in `packages/components/utils/localeUtils.ts` (pure, so safe in the proxy, server and browser). **`SUPPORTED_LOCALES` is exactly the set of locales enabled in the Builder space, plus the default**: `scripts/generate-locales.mjs` rewrites `utils/enabled-locales.json` from Builder before every `pnpm dev` / `pnpm build` (fails open; the file is gitignored and also regenerated on `pnpm install`). `KNOWN_LOCALES` is only the catalog used to seed Builder. Builder locale names must be ISO tags like `de-CH`.
+- Routes live under `app/[locale]/…`. The default locale (`en-US`) is **unprefixed** in public URLs (`/about`); every other locale is prefixed (`/de-CH/about`). `localizePath(path, locale)` builds public paths.
+- `handleLocale` in the proxy: `/en-US/x` redirects to `/x`; wrong casing redirects to canonical casing; an explicit URL locale wins and sets the `preferred_language` cookie; an unprefixed path redirects to the preferred locale (cookie, then `Accept-Language` with language→region fallback such as `de`→`de-DE`) or, for the default locale, is rewritten to `/en-US/…`. Builder editor requests are never redirected.
+- `apps/app-0/lib/page-utils.ts`: `toUrlPath(segments)`, `buildLocaleAlternates()` (canonical + hreflang incl. `x-default`), `PREBUILD_LOCALES` (only `en-US` is prebuilt; other locales render on first request and are ISR-cached; add locales there to prebuild them).
+- SEO: `<html lang>`, `og:locale`, canonical and hreflang alternates come from the route's locale; `sitemap.ts` emits `alternates.languages`; `/api/revalidate` revalidates every locale of a published page.
+
+### Enabling a locale
+Enable it in Builder (Space settings → Localization) and redeploy; the build picks it up. To seed Builder from the catalog:
+```bash
+pnpm --filter app-0 sync:locales                # read-only report: catalog vs Builder
+pnpm --filter app-0 sync:locales --push --yes   # add missing catalog locales (additive upsert only)
+pnpm --filter app-0 generate:locales            # refresh enabled-locales.json now
+```
+A locale disabled in Builder 404s on the site. Enabling or disabling needs a new deploy (the proxy cannot fetch the list per request).
 
 ### Proxy/i18n rules
 - **DO** keep the matcher tightly scoped — every path it matches is a billable edge invocation.
-- **DO** route new locale logic through `page-utils` + the shared middleware utils, not ad-hoc code in routes.
+- **DO** enable/disable locales in Builder, not in code.
+- **DO** build internal links with `localizePath` (or `DynamicLink`/`resolveLinkHref`).
 - **DON'T** reintroduce `middleware.ts`.
 
 ---
@@ -263,7 +259,7 @@ Cost discipline is a first-class concern. The source of truth is [`docs/vercel-m
 ```ts
 // lib/builder.ts — request-scoped dedup
 export const getSiteContext = cache(
-  async (locale: string = "en"): Promise<SiteContext | null> => {
+  async (locale: string = DEFAULT_LOCALE): Promise<SiteContext | null> => {
     const siteContext = await fetchOneEntry({
       model: "site-context", apiKey: BUILDER_API_KEY,
       query: { name: SITE_CONTEXT_NAME }, options: { noTargeting: true },

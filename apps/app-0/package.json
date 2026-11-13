@@ -6,11 +6,13 @@
     "node": "22.x"
   },
   "scripts": {
-    "dev": "next dev -p 3000",
-    "build": "next build",
+    "dev": "node ../../scripts/generate-locales.mjs && next dev -p 3000",
+    "build": "node ../../scripts/generate-locales.mjs && next build",
     "start": "next start -p 3000",
     "lint": "eslint .",
-    "init:builder": "node ../../scripts/seed-builder.mjs"
+    "init:builder": "node ../../scripts/seed-builder.mjs",
+    "generate:locales": "node ../../scripts/generate-locales.mjs",
+    "sync:locales": "node ../../scripts/sync-locales.mjs"
   },
   "dependencies": {
     "@builder.io/sdk-react": "^5.2.3",

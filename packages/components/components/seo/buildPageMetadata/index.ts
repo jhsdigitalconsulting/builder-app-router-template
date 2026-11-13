@@ -1,4 +1,5 @@
 import type { Metadata as NextMetadata } from "next";
+import { toOpenGraphLocale } from "../../../utils/localeUtils";
 
 // Server-safe replacement for the meta-tag portion of the old SEOHead.
 // Returns a Next.js App Router Metadata object (no hooks, no next/head).
@@ -13,6 +14,12 @@ export interface BuildPageMetadataArgs {
   publishedDate?: string;
   author?: string;
   keywords?: string | string[];
+  // BCP 47 locale of the rendered content, e.g. "de-CH" (-> og:locale de_CH).
+  locale?: string;
+  // Absolute (or metadataBase-relative) canonical URL for this locale.
+  canonical?: string;
+  // hreflang map: locale (or "x-default") -> URL, for every locale variant.
+  languages?: Record<string, string>;
 }
 
 export function buildPageMetadata({
@@ -25,6 +32,9 @@ export function buildPageMetadata({
   publishedDate,
   author,
   keywords,
+  locale,
+  canonical,
+  languages,
 }: BuildPageMetadataArgs): NextMetadata {
   const keywordList = Array.isArray(keywords)
     ? keywords
@@ -41,12 +51,19 @@ export function buildPageMetadata({
     title,
     description,
     keywords: keywordList,
+    ...((canonical || languages) && {
+      alternates: {
+        ...(canonical && { canonical }),
+        ...(languages && { languages }),
+      },
+    }),
     openGraph: {
       title,
       description,
       type: ogType,
       ...(url && { url }),
       ...(siteName && { siteName }),
+      ...(locale && { locale: toOpenGraphLocale(locale) }),
       ...(image && { images: [{ url: image }] }),
       ...(type === "article" &&
         (publishedDate || author) && {

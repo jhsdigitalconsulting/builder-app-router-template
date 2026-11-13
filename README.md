@@ -80,7 +80,7 @@ The script ([`apps/app-0/scripts/seed-builder.mjs`](./apps/app-0/scripts/seed-bu
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to view the app. Builder.io content is fetched and rendered through the App Router catch-all route in `apps/app-0/app/[[...page]]/`.
+Open [http://localhost:3000](http://localhost:3000) to view the app. Builder.io content is fetched and rendered through the App Router catch-all route in `apps/app-0/app/[locale]/[[...page]]/`.
 
 ## URL redirects
 

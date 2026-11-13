@@ -11,20 +11,25 @@ import {
   buildPageMetadata,
 } from "@repo/components";
 import type { SiteContext } from "@repo/types";
-import { BUILDER_API_KEY, getSiteContext } from "../../../lib/builder";
-import { isPreviewingFromSearchParams } from "../../../lib/page-utils";
-import RenderBuilderContent from "../../../components/RenderBuilderContent";
-import PageShell from "../../../components/PageShell";
+import { localizePath, normalizeLocale } from "@repo/components/utils";
+import { BUILDER_API_KEY, getSiteContext } from "../../../../lib/builder";
+import {
+  PREBUILD_LOCALES,
+  buildLocaleAlternates,
+  isPreviewingFromSearchParams,
+} from "../../../../lib/page-utils";
+import RenderBuilderContent from "../../../../components/RenderBuilderContent";
+import PageShell from "../../../../components/PageShell";
 
 // ISR window (seconds) for published Builder.io content. Must be a literal —
 // App Router segment config is statically analyzed and rejects runtime/env
 // expressions. Editors still get instant updates via Builder preview mode.
 export const revalidate = 300;
 
-function formatDate(timestamp: number): string {
+function formatDate(timestamp: number, locale: string): string {
   if (!timestamp) return "";
   const date = new Date(timestamp);
-  return date.toLocaleDateString("en-US", {
+  return date.toLocaleDateString(locale, {
     year: "numeric",
     month: "long",
     day: "numeric",
@@ -41,7 +46,9 @@ const fetchArticle = cache(async (handle: string, locale: string) =>
   })
 );
 
-export async function generateStaticParams(): Promise<{ handle: string }[]> {
+export async function generateStaticParams(): Promise<
+  { locale: string; handle: string }[]
+> {
   const articles = await fetchEntries({
     model: "article",
     apiKey: BUILDER_API_KEY,
@@ -49,25 +56,35 @@ export async function generateStaticParams(): Promise<{ handle: string }[]> {
     options: { noTargeting: true },
   });
 
-  return articles
+  const handles = articles
     .map((article) => String(article.data?.handle))
-    .filter(Boolean)
-    .map((handle) => ({ handle }));
+    .filter(Boolean);
+
+  return PREBUILD_LOCALES.flatMap((locale) =>
+    handles.map((handle) => ({ locale, handle }))
+  );
 }
 
 interface BlogRouteProps {
-  params: Promise<{ handle: string }>;
+  params: Promise<{ locale: string; handle: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 export async function generateMetadata({
   params,
 }: BlogRouteProps): Promise<Metadata> {
-  const { handle } = await params;
+  const { locale: rawLocale, handle } = await params;
+  const locale = normalizeLocale(rawLocale);
+  if (!locale) return {};
   const [article, siteContext] = await Promise.all([
-    fetchArticle(handle, "en"),
-    getSiteContext("en"),
+    fetchArticle(handle, locale),
+    getSiteContext(locale),
   ]);
+
+  const { canonical, languages } = buildLocaleAlternates(
+    `/blogs/${handle}`,
+    locale
+  );
 
   return buildPageMetadata({
     title: article?.data?.title || "",
@@ -79,6 +96,9 @@ export async function generateMetadata({
     publishedDate: article?.data?.publishDate,
     author: article?.data?.author,
     keywords: article?.data?.metadata?.keywords,
+    locale,
+    canonical,
+    languages,
   });
 }
 
@@ -86,9 +106,10 @@ export default async function BlogPage({
   params,
   searchParams,
 }: BlogRouteProps) {
-  const { handle } = await params;
+  const { locale: rawLocale, handle } = await params;
   const resolvedSearchParams = await searchParams;
-  const locale = "en";
+  const locale = normalizeLocale(rawLocale);
+  if (!locale || locale !== rawLocale) notFound();
 
   const [article, siteContext] = await Promise.all([
     fetchArticle(handle, locale),
@@ -102,7 +123,8 @@ export default async function BlogPage({
   }
 
   const publishedDate = formatDate(
-    article?.data?.publishDate || article?.lastUpdated
+    article?.data?.publishDate || article?.lastUpdated,
+    locale
   );
 
   const origin = process.env.NEXT_PUBLIC_SITE_URL;
@@ -169,9 +191,9 @@ export default async function BlogPage({
               data={{
                 pageContext: {
                   breadcrumbs: [
-                    { label: "Home", href: origin || "" },
-                    { label: "Blog", href: `${origin || ""}/blogs` },
-                    { label: article?.data?.title || "", href: `${origin || ""}/blogs/${handle}` },
+                    { label: "Home", href: `${origin || ""}${localizePath("/", locale)}` },
+                    { label: "Blog", href: `${origin || ""}${localizePath("/blogs", locale)}` },
+                    { label: article?.data?.title || "", href: `${origin || ""}${localizePath(`/blogs/${handle}`, locale)}` },
                   ],
                 },
               }}
